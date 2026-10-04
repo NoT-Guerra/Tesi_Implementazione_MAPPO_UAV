@@ -13,9 +13,10 @@ class SingleUAVEnv(gym.Env):
     def __init__(self, render_mode=None, size=10):
         self.size = size  # dimensione della griglia nxn
         self.window_size = 768  # dimensione della finestra pygame in pixel
+        self.num_obstacles = 4
 
-        # lo stato è un vettore di 4 elementi: [uav_x, uav_y, target_x, target_y]
-        self.observation_space = spaces.Box(low=0, high=size-1, shape=(4,), dtype=np.int32)
+        # lo stato è un vettore di 4 elementi: [uav_x, uav_y, target_x, target_y] più 2 coordinate per ogni ostacolo
+        self.observation_space = spaces.Box(low=0, high=size-1, shape=(4 + self.num_obstacles * 2,), dtype=np.int32)
 
         # 5 azioni: 0: fermo, 1: destra, 2: giù, 3: sinistra, 4: su
         self.action_space = spaces.Discrete(5)
@@ -32,10 +33,13 @@ class SingleUAVEnv(gym.Env):
         self.clock = None
 
     def _get_obs(self):
-        return np.array([
+        obs = [
             self._agent_location[0], self._agent_location[1],
             self._target_location[0], self._target_location[1]
-        ], dtype=np.int32)
+        ]
+        for ob in self._obstacles:
+            obs.extend([ob[0], ob[1]])
+        return np.array(obs, dtype=np.int32)
 
     def _get_info(self):
         # distanza di manhattan tra uav e target
@@ -51,6 +55,17 @@ class SingleUAVEnv(gym.Env):
         self._target_location = self._agent_location
         while np.array_equal(self._target_location, self._agent_location):
             self._target_location = self.np_random.integers(0, self.size, size=2, dtype=np.int32)
+            
+        # posiziona le montagne casualmente
+        self._obstacles = []
+        for _ in range(self.num_obstacles):
+            obs_loc = self.np_random.integers(0, self.size, size=2, dtype=np.int32)
+            # per far si che le montagne non si sovrappongano a agent, target o ad altre montagne
+            while np.array_equal(obs_loc, self._agent_location) or \
+                  np.array_equal(obs_loc, self._target_location) or \
+                  any(np.array_equal(obs_loc, o) for o in self._obstacles):
+                obs_loc = self.np_random.integers(0, self.size, size=2, dtype=np.int32)
+            self._obstacles.append(obs_loc)
             
         self.step_count = 0
             
@@ -78,7 +93,21 @@ class SingleUAVEnv(gym.Env):
             reward -= 10.0
             
         # limita la posizione dentro la griglia
-        self._agent_location = np.clip(new_location, 0, self.size - 1)
+        new_location = np.clip(new_location, 0, self.size - 1)
+        
+        # check collisione montagne
+        hit_obstacle = False
+        for obs in self._obstacles:
+            if np.array_equal(new_location, obs):
+                hit_obstacle = True
+                break
+                
+        if hit_obstacle:
+            reward -= 10.0
+            # il drone non può attraversare la montagna
+            new_location = self._agent_location
+            
+        self._agent_location = new_location
         
         # condizione di successo
         terminated = np.array_equal(self._agent_location, self._target_location)
@@ -122,6 +151,14 @@ class SingleUAVEnv(gym.Env):
                 self.hangar_img = pygame.image.load(target_img_path)
             except (FileNotFoundError, pygame.error):
                 self.hangar_img = None
+                
+            # carica l'immagine della montagna
+            try:
+                import os
+                mountain_img_path = os.path.join("Img", "montagna.png")
+                self.mountain_img = pygame.image.load(mountain_img_path)
+            except (FileNotFoundError, pygame.error):
+                self.mountain_img = None
             
         if self.clock is None and self.render_mode == "human":
             self.clock = pygame.time.Clock()
@@ -138,6 +175,14 @@ class SingleUAVEnv(gym.Env):
             pos_x = self._target_location[0] * pix_square_size - (pix_square_size * 0.1)
             pos_y = self._target_location[1] * pix_square_size - (pix_square_size * 0.1)
             canvas.blit(scaled_hangar, (pos_x, pos_y))
+            
+        # carica l'immagine delle montagne 
+        if hasattr(self, 'mountain_img') and self.mountain_img is not None:
+            scaled_mountain = pygame.transform.scale(self.mountain_img, (int(pix_square_size * 1.0), int(pix_square_size * 1.0)))
+            for obs in self._obstacles:
+                pos_x = obs[0] * pix_square_size
+                pos_y = obs[1] * pix_square_size
+                canvas.blit(scaled_mountain, (pos_x, pos_y))
         
         # disegna l'uav
         if hasattr(self, 'drone_img') and self.drone_img is not None:

@@ -10,8 +10,8 @@ if __name__ == "__main__":
     model = PPO("MlpPolicy", env, verbose=1, tensorboard_log="./ppo_uav_tensorboard/")
 
     print("Inizio dell'addestramento...")
-    # addestra per 50.000 step
-    model.learn(total_timesteps=50000)
+    # addestra per 500.000 step (ora il problema è più complesso)
+    model.learn(total_timesteps=500000)
     print("Addestramento completato!")
 
     # salva il modello addestrato
