@@ -1,22 +1,28 @@
 from stable_baselines3 import PPO
 from stable_baselines3.common.evaluation import evaluate_policy
-from env import SingleUAVEnv
+from env import MultiUAVEnv
 
 if __name__ == "__main__":
-    # crea l'ambiente senza render per massimizzare la velocità di addestramento
-    env = SingleUAVEnv(size=10)
+    NUM_UAVS = 2
+    SIZE = 10
+    SEED = 42
+    NUM_OBSTACLES = 4
 
-    # inizializza ppo con mlppolicy, che è perfetta per l'observation space (box)
-    model = PPO("MlpPolicy", env, verbose=1, tensorboard_log="./ppo_uav_tensorboard/")
+    # crea l'ambiente senza render per massimizzare la velocità di addestramento
+    env = MultiUAVEnv(size=SIZE, num_obstacles=NUM_OBSTACLES, num_uavs=NUM_UAVS)
+
+    # inizializza ppo con mlppolicy
+    model = PPO("MlpPolicy", env, seed=SEED, verbose=1, tensorboard_log="./ppo_uav_tensorboard/")
 
     print("Inizio dell'addestramento...")
-    # addestra per 500.000 step (ora il problema è più complesso)
-    model.learn(total_timesteps=500000)
+    # addestra per 1.500.000 step
+    model.learn(total_timesteps=1500000)
     print("Addestramento completato!")
 
     # salva il modello addestrato
-    model.save("ppo_single_uav")
-    print("Modello salvato come 'ppo_single_uav.zip'")
+    model_name = f"ppo_multi_uav_{NUM_UAVS}_{SEED}"
+    model.save(model_name)
+    print(f"Modello salvato come '{model_name}.zip'")
 
     # valuta la performance del modello dopo l'addestramento
     mean_reward, std_reward = evaluate_policy(model, env, n_eval_episodes=10)

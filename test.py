@@ -1,14 +1,19 @@
 from stable_baselines3 import PPO
-from env import SingleUAVEnv
+from env import MultiUAVEnv
 import time
 
 if __name__ == "__main__":
-    # crea l'ambiente con render_mode="human" per vedere a schermo la gui
-    env = SingleUAVEnv(render_mode="human", size=10)
+    NUM_UAVS = 2
+    SIZE = 10
+    NUM_OBSTACLES = 4
 
+    # crea l'ambiente con render_mode="human" per vedere a schermo la gui
+    env = MultiUAVEnv(render_mode="human", size=SIZE, num_obstacles=NUM_OBSTACLES, num_uavs=NUM_UAVS)
+
+    model_name = f"ppo_multi_uav_{NUM_UAVS}"
     # carica il modello precedentemente addestrato
     try:
-        model = PPO.load("ppo_single_uav")
+        model = PPO.load(model_name)
     except FileNotFoundError:
         print("Errore: Modello non trovato. Devi prima eseguire train.py!")
         exit(1)
