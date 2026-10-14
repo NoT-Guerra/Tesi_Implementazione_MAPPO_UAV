@@ -325,18 +325,30 @@ class MultiUAVEnv(gym.Env):
             else:
                 new_locations[i] = candidate_pos
 
-        # 2. Controllo collisioni Drone-Drone (tra droni in volo fuori dal target)
+        # 2. Controllo collisioni Drone-Drone (vertice ed edge collision)
         for i in range(self.num_uavs):
             for j in range(i + 1, self.num_uavs):
-                # Se entrambi non sono già all'hangar
-                if not (self._arrived[i] and self._arrived[j]):
-                    # Se finiscono sulla stessa casella che NON è il target
-                    if np.array_equal(new_locations[i], new_locations[j]):
-                        if not np.array_equal(new_locations[i], self._target_location):
-                            rewards -= 20.0  # Penalità severa per scontro aereo tra droni
-                            # Entrambi rimangono fermi alle coordinate precedenti
-                            new_locations[i] = self._uav_locations[i]
-                            new_locations[j] = self._uav_locations[j]
+                if self._arrived[i] and self._arrived[j]:
+                    continue
+
+                # collisione di vertice: finiscono sulla stessa casella fuori dal target
+                vertex_collision = (
+                    np.array_equal(new_locations[i], new_locations[j])
+                    and not np.array_equal(new_locations[i], self._target_location)
+                )
+
+                # collisione di spigolo (swap): scambio frontale di posizioni in volo
+                edge_collision = (
+                    not self._arrived[i] and not self._arrived[j]
+                    and np.array_equal(new_locations[i], self._uav_locations[j])
+                    and np.array_equal(new_locations[j], self._uav_locations[i])
+                )
+
+                if vertex_collision or edge_collision:
+                    rewards -= 20.0  # penalità per scontro tra droni
+                    # entrambi rimangono fermi alle coordinate precedenti
+                    new_locations[i] = self._uav_locations[i]
+                    new_locations[j] = self._uav_locations[j]
 
         # 3. Aggiorna posizioni e valuta arrivo all'hangar
         for i in range(self.num_uavs):
@@ -390,8 +402,6 @@ class MultiUAVEnv(gym.Env):
 
         if self.clock is None and self.render_mode == "human":
             self.clock = pygame.time.Clock()
-            pygame.font.init()
-            self.font = pygame.font.SysFont("Arial", 14, bold=True)
 
         canvas = pygame.Surface((self.window_size, self.window_size))
         canvas.fill((255, 255, 255))
@@ -448,15 +458,7 @@ class MultiUAVEnv(gym.Env):
                     pix_square_size / 3,
                 )
 
-            # Badge identificativo (D1, D2, ...) con spunta quando arrivato
-            if self.font:
-                label_text = f"D{i+1}✓" if self._arrived[i] else f"D{i+1}"
-                text_surf = self.font.render(label_text, True, (0, 0, 0))
-                text_bg = pygame.Surface((text_surf.get_width() + 4, text_surf.get_height() + 2))
-                text_bg.fill((255, 255, 255))
-                text_bg.set_alpha(200)
-                canvas.blit(text_bg, (uav[0] * pix_square_size + 2, uav[1] * pix_square_size + 2))
-                canvas.blit(text_surf, (uav[0] * pix_square_size + 4, uav[1] * pix_square_size + 3))
+
 
         # 4. Disegna la Griglia
         for x in range(self.size + 1):
