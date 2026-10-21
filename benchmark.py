@@ -1,30 +1,34 @@
+"""
+Benchmark comparativo tra MAPPO e PPO centralizzato al variare del numero di droni.
+Misura prestazioni, tempo e risorse hardware (CPU, RAM, GPU, VRAM).
+"""
+
 import time
 import threading
 import subprocess
 import os
+import argparse
 import psutil
 import numpy as np
 import matplotlib.pyplot as plt
-from stable_baselines3 import PPO
-from stable_baselines3.common.evaluation import evaluate_policy
+
 from env import MultiUAVEnv
+from mappo import MAPPO
+from stable_baselines3 import PPO
 
 
-# CONFIGURAZIONE DEL BENCHMARK
-# Testa con un numero crescente di droni
-DRONE_COUNTS = [1, 2, 3, 4, 5]
-
-# Step di addestramento per ciascun test (50.000 è ideale per un benchmark rapido)
-TIMESTEPS_PER_RUN = 50000
-
+# configurazione di default
+DEFAULT_DRONE_COUNTS = [1, 2, 3, 4]
+DEFAULT_TIMESTEPS = "150000,450000,750000,1000000"  # step calibrati: 150k (1 drone), 450k (2), 750k (3), 1M (4)
+DEFAULT_EVAL_EPISODES = 100 # episodi di test per ridurre la varianza statistica
 SIZE = 10
 NUM_OBSTACLES = 4
 SEED = 42
 
+
 def get_gpu_stats():
     """
-    Rileva utilizzo istantaneo e memoria VRAM della GPU tramite nvidia-smi.
-    Restituisce (gpu_util_percent, vram_used_mb).
+    Legge l'utilizzo e la memoria VRAM della GPU tramite nvidia-smi.
     """
     try:
         flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
@@ -39,11 +43,12 @@ def get_gpu_stats():
     except Exception:
         return 0.0, 0.0
 
+
 class ResourceMonitor(threading.Thread):
     """
-    Monitor in background che campiona CPU, RAM di processo, GPU e VRAM a intervalli regolari.
+    Thread per monitorare CPU, RAM, GPU e VRAM a intervalli regolari.
     """
-    def __init__(self, interval=0.3):
+    def __init__(self, interval=0.25):
         super().__init__()
         self.interval = interval
         self.running = True
@@ -55,17 +60,15 @@ class ResourceMonitor(threading.Thread):
         self.vram_samples = []
 
     def run(self):
-        # Campiona le risorse finché running è True
         while self.running:
             try:
-                # Utilizzo CPU e memoria RAM di sistema/processo
+                # campiona cpu e ram del processo
                 cpu = self.process.cpu_percent(interval=None)
                 ram_mb = self.process.memory_info().rss / (1024 * 1024)
-                
-                # Utilizzo GPU e VRAM da nvidia-smi
+                # campiona gpu e vram
                 gpu_util, vram_mb = get_gpu_stats()
 
-                if cpu > 0.0:  # Ignora il primo campione non inizializzato
+                if cpu > 0.0:
                     self.cpu_samples.append(cpu)
                 self.ram_samples.append(ram_mb)
                 self.gpu_samples.append(gpu_util)
@@ -78,6 +81,7 @@ class ResourceMonitor(threading.Thread):
         self.running = False
 
     def get_summary(self):
+        # calcola medie e picchi massimi
         return {
             "cpu_avg": float(np.mean(self.cpu_samples)) if self.cpu_samples else 0.0,
             "cpu_max": float(np.max(self.cpu_samples)) if self.cpu_samples else 0.0,
@@ -89,132 +93,362 @@ class ResourceMonitor(threading.Thread):
             "vram_max": float(np.max(self.vram_samples)) if self.vram_samples else 0.0,
         }
 
-def run_benchmark():
-    results = []
 
-    print(" AVVIO BENCHMARK CONSUMO RISORSE (CPU & GPU) SU PPO MULTI-UAV (MAX 5 DRONI)")
-    print(f" Timesteps per configurazione: {TIMESTEPS_PER_RUN} | Griglia: {SIZE}x{SIZE} | Seed: {SEED}")
+def evaluate_agent(model, algo, env, n_eval_episodes=DEFAULT_EVAL_EPISODES):
+    """
+    Valuta un agente (MAPPO o PPO) su un dato numero di episodi.
+    """
+    rewards = []
+    successes = []
+    steps_list = []
 
-    for n_uavs in DRONE_COUNTS:
-        print(f"\n>>> Test in corso: N = {n_uavs} dron{'e' if n_uavs == 1 else 'i'}...")
+    for _ in range(n_eval_episodes):
+        obs, info = env.reset()
+        done = False
+        ep_rew = 0.0
+        step_count = 0
 
-        # 1. Crea l'ambiente
-        env = MultiUAVEnv(size=SIZE, num_obstacles=NUM_OBSTACLES, num_uavs=n_uavs)
+        while not done:
+            action, _ = model.predict(obs, deterministic=True)
+            # adatta il formato dell'azione per l'ambiente
+            if algo.lower() == "mappo":
+                env_action = action if env.num_uavs > 1 else (action[0] if hasattr(action, "__len__") else action)
+            else:
+                env_action = action
 
-        # 2. Inizializza PPO
-        model = PPO("MlpPolicy", env, seed=SEED, verbose=0)
+            obs, r, term, trunc, info = env.step(env_action)
+            ep_rew += r
+            step_count += 1
+            done = term or trunc
 
-        # 3. Avvia il monitoraggio delle risorse
-        monitor = ResourceMonitor(interval=0.3)
-        monitor.start()
+        rewards.append(ep_rew)
+        # verifica se la missione ha avuto successo
+        is_succ = info.get("success", term)
+        successes.append(1.0 if is_succ else 0.0)
+        steps_list.append(step_count)
 
-        # 4. Misura tempo e addestra
-        start_time = time.time()
-        model.learn(total_timesteps=TIMESTEPS_PER_RUN)
-        elapsed_time = time.time() - start_time
+    return (
+        float(np.mean(rewards)),
+        float(np.std(rewards)),
+        float(np.mean(successes) * 100.0),
+        float(np.mean(steps_list))
+    )
 
-        # 5. Ferma il monitoraggio
-        monitor.stop()
-        monitor.join()
 
-        # 6. Calcola throughput (FPS) e valuta la policy
-        fps = TIMESTEPS_PER_RUN / elapsed_time if elapsed_time > 0 else 0
-        mean_rew, std_rew = evaluate_policy(model, env, n_eval_episodes=5)
-        stats = monitor.get_summary()
+def run_single_benchmark(algo, n_uavs, timesteps, size=SIZE, num_obstacles=NUM_OBSTACLES, seed=SEED):
+    """
+    Esegue il benchmark per un dato algoritmo e numero di droni.
+    """
+    drone_lbl = f"{n_uavs} dron{'e' if n_uavs == 1 else 'i'}"
+    print(f"\n---> [{algo.upper()}] Test in corso su {drone_lbl} ({timesteps:,} step)...")
 
-        env.close()
+    # crea l'ambiente
+    env = MultiUAVEnv(size=size, num_obstacles=num_obstacles, num_uavs=n_uavs)
 
-        run_data = {
-            "n_uavs": n_uavs,
-            "time_s": elapsed_time,
-            "fps": fps,
-            "cpu_avg": stats["cpu_avg"],
-            "cpu_max": stats["cpu_max"],
-            "ram_avg": stats["ram_avg"],
-            "gpu_avg": stats["gpu_avg"],
-            "gpu_max": stats["gpu_max"],
-            "vram_avg": stats["vram_avg"],
-            "mean_reward": mean_rew,
-        }
-        results.append(run_data)
-
-        print(f"    Completato in {elapsed_time:.2f}s ({fps:.1f} FPS)")
-        print(f"    CPU: {stats['cpu_avg']:.1f}% (picco {stats['cpu_max']:.1f}%) | RAM: {stats['ram_avg']:.1f} MB")
-        print(f"    GPU: {stats['gpu_avg']:.1f}% (picco {stats['gpu_max']:.1f}%) | VRAM: {stats['vram_avg']:.0f} MB")
-        print(f"    Reward Medio (5 ep): {mean_rew:.2f}")
-
-    # STAMPA TABELLA RIASSUNTIVA
-    print("TABELLA FINALE COMPARATIVA DELLE RISORSE COMPUTAZIONALI")
-    header = f"{'Droni':<6} | {'Tempo (s)':<10} | {'FPS (step/s)':<13} | {'CPU Media':<11} | {'CPU Picco':<11} | {'RAM (MB)':<10} | {'GPU Media':<11} | {'VRAM (MB)':<10} | {'Reward':<10}"
-    print(header)
-    for r in results:
-        row = (
-            f"{r['n_uavs']:<6} | "
-            f"{r['time_s']:<10.2f} | "
-            f"{r['fps']:<13.1f} | "
-            f"{r['cpu_avg']:<10.1f}% | "
-            f"{r['cpu_max']:<10.1f}% | "
-            f"{r['ram_avg']:<10.1f} | "
-            f"{r['gpu_avg']:<10.1f}% | "
-            f"{r['vram_avg']:<10.0f} | "
-            f"{r['mean_reward']:<10.2f}"
+    # inizializza il modello
+    if algo.lower() == "mappo":
+        model = MAPPO(
+            num_uavs=n_uavs,
+            grid_size=size,
+            num_obstacles=num_obstacles,
+            hidden_dim=128,
+            lr_actor=3e-4,
+            lr_critic=1e-3,
+            n_steps=1024,
+            batch_size=64,
+            seed=seed
         )
-        print(row)
+    else:
+        model = PPO("MlpPolicy", env, seed=seed, verbose=0)
 
-    # SALVATAGGIO DEI RISULTATI SU FILE CSV
-    csv_file = "benchmark_risultati.csv"
-    with open(csv_file, "w", encoding="utf-8") as f:
-        f.write("Droni,Tempo_s,FPS,CPU_Media_pct,CPU_Picco_pct,RAM_MB,GPU_Media_pct,GPU_Picco_pct,VRAM_MB,Reward_Medio\n")
-        for r in results:
-            f.write(f"{r['n_uavs']},{r['time_s']:.2f},{r['fps']:.1f},{r['cpu_avg']:.2f},{r['cpu_max']:.2f},{r['ram_avg']:.2f},{r['gpu_avg']:.2f},{r['gpu_max']:.2f},{r['vram_avg']:.2f},{r['mean_reward']:.2f}\n")
-    print(f"\n[+] Risultati salvati in: {csv_file}")
+    # avvia il monitoraggio delle risorse
+    monitor = ResourceMonitor(interval=0.25)
+    monitor.start()
 
-    # GENERAZIONE GRAFICO COMPARATIVO
-    droni = [r["n_uavs"] for r in results]
-    fig, axes = plt.subplots(2, 2, figsize=(13, 9))
+    # addestramento e misura del tempo impiegato
+    start_time = time.time()
+    if isinstance(model, MAPPO):
+        model.learn(env, total_timesteps=timesteps, verbose=0)
+    else:
+        model.learn(total_timesteps=timesteps)
+    elapsed_time = time.time() - start_time
+
+    # ferma il monitoraggio
+    monitor.stop()
+    monitor.join()
+
+    # calcola fps e metriche risorse
+    fps = timesteps / elapsed_time if elapsed_time > 0 else 0
+    stats = monitor.get_summary()
+
+    # valuta le prestazioni su episodi di test
+    mean_rew, std_rew, succ_rate, avg_steps = evaluate_agent(model, algo, env, n_eval_episodes=DEFAULT_EVAL_EPISODES)
+    env.close()
+
+    print(f"     Completato in {elapsed_time:.2f}s ({fps:.1f} FPS)")
+    print(f"     Reward: {mean_rew:.2f} +/- {std_rew:.2f} | Success Rate: {succ_rate:.1f}% | Passi Medi: {avg_steps:.1f}")
+    print(f"     CPU: {stats['cpu_avg']:.1f}% (picco {stats['cpu_max']:.1f}%) | RAM: {stats['ram_avg']:.1f} MB | GPU: {stats['gpu_avg']:.1f}%")
+
+    return {
+        "algo": algo.upper(),
+        "n_uavs": n_uavs,
+        "timesteps": timesteps,
+        "time_s": elapsed_time,
+        "fps": fps,
+        "cpu_avg": stats["cpu_avg"],
+        "cpu_max": stats["cpu_max"],
+        "ram_avg": stats["ram_avg"],
+        "ram_max": stats["ram_max"],
+        "gpu_avg": stats["gpu_avg"],
+        "gpu_max": stats["gpu_max"],
+        "vram_avg": stats["vram_avg"],
+        "mean_reward": mean_rew,
+        "std_reward": std_rew,
+        "success_rate": succ_rate,
+        "avg_steps": avg_steps,
+    }
+
+
+def generate_comparison_plots(results_mappo, results_ppo, output_image="benchmark_confronto_mappo.png", seed=SEED):
+    """
+    Genera grafici comparativi tra MAPPO e PPO centralizzato.
+    """
+    droni_mappo = [r["n_uavs"] for r in results_mappo]
+    droni_ppo = [r["n_uavs"] for r in results_ppo]
+
+    fig, axes = plt.subplots(3, 2, figsize=(14, 15))
     plt.subplots_adjust(hspace=0.35, wspace=0.25)
-    fig.suptitle("Analisi di Scalabilità e Consumo Risorse Hardware al variare del Numero di UAV", fontsize=15, fontweight="bold")
+    fig.suptitle(
+        f"Confronto Benchmark (Seed {seed}): MAPPO (CTDE Parametrico) vs PPO Centralizzato al variare del Numero di UAV",
+        fontsize=16,
+        fontweight="bold"
+    )
 
-    # 1. Utilizzo CPU e GPU (%)
-    axes[0, 0].plot(droni, [r["cpu_avg"] for r in results], marker="o", color="#d9534f", linewidth=2, label="CPU Media (%)")
-    axes[0, 0].plot(droni, [r["gpu_avg"] for r in results], marker="s", color="#0275d8", linewidth=2, label="GPU Media (%)")
-    axes[0, 0].set_title("Utilizzo Processore (CPU) e GPU (%)", fontweight="bold")
+    color_mappo = "blue"  # colore per mappo
+    color_ppo = "red"    # colore per ppo
+
+    # reward medio
+    axes[0, 0].plot(droni_mappo, [r["mean_reward"] for r in results_mappo], marker="o", linewidth=2.5, color=color_mappo, label="MAPPO")
+    axes[0, 0].plot(droni_ppo, [r["mean_reward"] for r in results_ppo], marker="s", linewidth=2.5, color=color_ppo, linestyle="--", label="PPO Centralizzato")
+    axes[0, 0].set_title(f"Reward Medio ({DEFAULT_EVAL_EPISODES} Episodi di Valutazione)", fontweight="bold")
     axes[0, 0].set_xlabel("Numero di Droni (UAV)")
-    axes[0, 0].set_ylabel("Utilizzo (%)")
-    axes[0, 0].set_xticks(droni)
+    axes[0, 0].set_ylabel("Reward Medio")
+    axes[0, 0].set_xticks(droni_mappo)
     axes[0, 0].grid(True, linestyle="--", alpha=0.6)
-    axes[0, 0].legend()
+    axes[0, 0].legend(fontsize=11)
 
-    # 2. Throughput / Velocità di elaborazione (FPS)
-    axes[0, 1].plot(droni, [r["fps"] for r in results], marker="^", color="#5cb85c", linewidth=2)
-    axes[0, 1].set_title("Throughput di Calcolo (FPS - Step/secondo)", fontweight="bold")
+    # success rate
+    axes[0, 1].plot(droni_mappo, [r["success_rate"] for r in results_mappo], marker="^", linewidth=2.5, color=color_mappo, label="MAPPO")
+    axes[0, 1].plot(droni_ppo, [r["success_rate"] for r in results_ppo], marker="v", linewidth=2.5, color=color_ppo, linestyle="--", label="PPO Centralizzato")
+    axes[0, 1].set_title("Tasso di Successo Missione (% Arrivo Completo Flotta)", fontweight="bold")
     axes[0, 1].set_xlabel("Numero di Droni (UAV)")
-    axes[0, 1].set_ylabel("Step / secondo")
-    axes[0, 1].set_xticks(droni)
+    axes[0, 1].set_ylabel("Success Rate (%)")
+    axes[0, 1].set_xticks(droni_mappo)
+    axes[0, 1].set_ylim(-5, 105)
     axes[0, 1].grid(True, linestyle="--", alpha=0.6)
+    axes[0, 1].legend(fontsize=11)
 
-    # 3. Tempo di Addestramento Totale (s)
-    axes[1, 0].bar(droni, [r["time_s"] for r in results], color="#f0ad4e", width=0.5, edgecolor="black")
-    axes[1, 0].set_title(f"Tempo di Addestramento Totale ({TIMESTEPS_PER_RUN} step)", fontweight="bold")
+    # throughput fps
+    axes[1, 0].plot(droni_mappo, [r["fps"] for r in results_mappo], marker="D", linewidth=2.5, color=color_mappo, label="MAPPO")
+    axes[1, 0].plot(droni_ppo, [r["fps"] for r in results_ppo], marker="x", linewidth=2.5, color=color_ppo, linestyle="--", label="PPO Centralizzato")
+    axes[1, 0].set_title("Throughput di Calcolo (FPS - Step/secondo)", fontweight="bold")
     axes[1, 0].set_xlabel("Numero di Droni (UAV)")
-    axes[1, 0].set_ylabel("Secondi (s)")
-    axes[1, 0].set_xticks(droni)
-    axes[1, 0].grid(True, linestyle="--", alpha=0.6, axis="y")
+    axes[1, 0].set_ylabel("Step / secondo")
+    axes[1, 0].set_xticks(droni_mappo)
+    axes[1, 0].grid(True, linestyle="--", alpha=0.6)
+    axes[1, 0].legend(fontsize=11)
 
-    # 4. Consumo Memoria RAM e VRAM (MB)
-    axes[1, 1].plot(droni, [r["ram_avg"] for r in results], marker="D", color="#6f42c1", linewidth=2, label="RAM Processo (MB)")
-    axes[1, 1].set_title("Utilizzo Memoria RAM (MB)", fontweight="bold")
+    # tempo di addestramento
+    x = np.array(droni_mappo)
+    width = 0.35
+    axes[1, 1].bar(x - width/2, [r["time_s"] for r in results_mappo], width=width, color=color_mappo, label="MAPPO", edgecolor="black")
+    axes[1, 1].bar(x + width/2, [r["time_s"] for r in results_ppo], width=width, color=color_ppo, label="PPO Centralizzato", edgecolor="black")
+    axes[1, 1].set_title("Tempo di Addestramento Totale (s)", fontweight="bold")
     axes[1, 1].set_xlabel("Numero di Droni (UAV)")
-    axes[1, 1].set_ylabel("Megabyte (MB)")
-    axes[1, 1].set_xticks(droni)
-    axes[1, 1].grid(True, linestyle="--", alpha=0.6)
-    axes[1, 1].legend()
+    axes[1, 1].set_ylabel("Secondi (s)")
+    axes[1, 1].set_xticks(droni_mappo)
+    axes[1, 1].grid(True, linestyle="--", alpha=0.6, axis="y")
+    axes[1, 1].legend(fontsize=11)
 
-    img_file = "benchmark_risorse.png"
-    plt.savefig(img_file, dpi=300, bbox_inches="tight")
+    # utilizzo cpu
+    axes[2, 0].plot(droni_mappo, [r["cpu_avg"] for r in results_mappo], marker="o", linewidth=2.5, color=color_mappo, label="MAPPO (CPU Media)")
+    axes[2, 0].plot(droni_ppo, [r["cpu_avg"] for r in results_ppo], marker="s", linewidth=2.5, color=color_ppo, linestyle="--", label="PPO (CPU Media)")
+    axes[2, 0].set_title("Utilizzo Processore CPU (%)", fontweight="bold")
+    axes[2, 0].set_xlabel("Numero di Droni (UAV)")
+    axes[2, 0].set_ylabel("Utilizzo CPU (%)")
+    axes[2, 0].set_xticks(droni_mappo)
+    axes[2, 0].grid(True, linestyle="--", alpha=0.6)
+    axes[2, 0].legend(fontsize=11)
+
+    # memoria ram
+    axes[2, 1].plot(droni_mappo, [r["ram_avg"] for r in results_mappo], marker="D", linewidth=2.5, color=color_mappo, label="MAPPO (RAM Processo)")
+    axes[2, 1].plot(droni_ppo, [r["ram_avg"] for r in results_ppo], marker="v", linewidth=2.5, color=color_ppo, linestyle="--", label="PPO (RAM Processo)")
+    axes[2, 1].set_title("Consumo Memoria RAM (MB)", fontweight="bold")
+    axes[2, 1].set_xlabel("Numero di Droni (UAV)")
+    axes[2, 1].set_ylabel("Megabyte (MB)")
+    axes[2, 1].set_xticks(droni_mappo)
+    axes[2, 1].grid(True, linestyle="--", alpha=0.6)
+    axes[2, 1].legend(fontsize=11)
+
+    plt.savefig(output_image, dpi=300, bbox_inches="tight")
     plt.close()
-    print(f"[+] Grafico comparativo salvato in: {img_file}")
-    print("Benchmark completato con successo!")
+    print(f"\n[+] Grafico comparativo salvato in: {output_image}")
+
+
+def run_benchmark(drone_counts=None, timesteps_per_run=DEFAULT_TIMESTEPS, mode="both", seed=SEED):
+    if drone_counts is None:
+        drone_counts = DEFAULT_DRONE_COUNTS
+
+    # Mappatura timesteps: supporta valore unico o lista separata da virgola
+    if isinstance(timesteps_per_run, str):
+        parts = [int(p.strip()) for p in timesteps_per_run.split(",") if p.strip()]
+        if len(parts) == 1:
+            timesteps_map = {n: parts[0] for n in drone_counts}
+        elif len(parts) == len(drone_counts):
+            timesteps_map = {n: parts[i] for i, n in enumerate(drone_counts)}
+        elif max(drone_counts) <= len(parts):
+            timesteps_map = {n: parts[n - 1] for n in drone_counts}
+        else:
+            raise ValueError(f"Numero di valori per --timesteps ({len(parts)}) non compatibile con i droni richiesti ({drone_counts}).")
+    elif isinstance(timesteps_per_run, (int, float)):
+        timesteps_map = {n: int(timesteps_per_run) for n in drone_counts}
+    elif isinstance(timesteps_per_run, dict):
+        timesteps_map = timesteps_per_run
+    else:
+        timesteps_map = {n: int(timesteps_per_run) for n in drone_counts}
+
+    steps_desc = ", ".join(f"{n} UAV: {timesteps_map[n]:,} step" for n in drone_counts)
+    print(f" AVVIO BENCHMARK COMPARATIVO PER OGNI QUANTITA DI DRONI ({drone_counts})")
+    print(f" Configurazione Timesteps: {steps_desc} | Seed: {seed} | Griglia: {SIZE}x{SIZE} | Ostacoli: {NUM_OBSTACLES}")
+
+    results_mappo = []
+    results_ppo = []
+
+    for n_uavs in drone_counts:
+        steps = timesteps_map[n_uavs]
+        # benchmark mappo
+        if mode in ["both", "mappo"]:
+            res_mappo = run_single_benchmark("mappo", n_uavs, steps, seed=seed)
+            results_mappo.append(res_mappo)
+
+        # benchmark ppo centralizzato
+        if mode in ["both", "ppo"]:
+            res_ppo = run_single_benchmark("ppo", n_uavs, steps, seed=seed)
+            results_ppo.append(res_ppo)
+
+    # stampa tabella riassuntiva a terminale
+    print(f"\n{'='*118}")
+    print(" TABELLA COMPARATIVA COMPLETA: MAPPO vs PPO CENTRALIZZATO")
+    print(f"{'='*118}")
+    header = (
+        f"{'Droni':<6} | {'Algoritmo':<18} | {'Step':<9} | {'Reward':<12} | {'Success%':<9} | "
+        f"{'FPS':<9} | {'Tempo (s)':<10} | {'CPU Avg%':<9} | {'RAM (MB)':<9} | {'GPU%':<6}"
+    )
+    print(header)
+    print("-" * 118)
+
+    all_results = []
+    for n in drone_counts:
+        m_res = next((r for r in results_mappo if r["n_uavs"] == n), None)
+        p_res = next((r for r in results_ppo if r["n_uavs"] == n), None)
+
+        if m_res:
+            all_results.append(m_res)
+            print(
+                f"{m_res['n_uavs']:<6} | "
+                f"{m_res['algo']:<18} | "
+                f"{m_res.get('timesteps', 0):<9} | "
+                f"{m_res['mean_reward']:<12.2f} | "
+                f"{m_res['success_rate']:<9.1f} | "
+                f"{m_res['fps']:<9.1f} | "
+                f"{m_res['time_s']:<10.2f} | "
+                f"{m_res['cpu_avg']:<9.1f} | "
+                f"{m_res['ram_avg']:<9.1f} | "
+                f"{m_res['gpu_avg']:<6.1f}"
+            )
+        if p_res:
+            all_results.append(p_res)
+            print(
+                f"{p_res['n_uavs']:<6} | "
+                f"{p_res['algo']:<18} | "
+                f"{p_res.get('timesteps', 0):<9} | "
+                f"{p_res['mean_reward']:<12.2f} | "
+                f"{p_res['success_rate']:<9.1f} | "
+                f"{p_res['fps']:<9.1f} | "
+                f"{p_res['time_s']:<10.2f} | "
+                f"{p_res['cpu_avg']:<9.1f} | "
+                f"{p_res['ram_avg']:<9.1f} | "
+                f"{p_res['gpu_avg']:<6.1f}"
+            )
+        print("-" * 118)
+
+    import shutil
+
+    # salva i risultati su file csv
+    csv_file = f"benchmark_confronto_mappo_{seed}.csv"
+    with open(csv_file, "w", encoding="utf-8") as f:
+        f.write(
+            "Droni,Algoritmo,Timesteps,Tempo_s,FPS,CPU_Media_pct,CPU_Picco_pct,RAM_MB,GPU_Media_pct,GPU_Picco_pct,VRAM_MB,Reward_Medio,Reward_Std,Success_Rate_pct,Avg_Steps\n"
+        )
+        for r in all_results:
+            f.write(
+                f"{r['n_uavs']},{r['algo']},{r.get('timesteps', 0)},{r['time_s']:.2f},{r['fps']:.1f},"
+                f"{r['cpu_avg']:.2f},{r['cpu_max']:.2f},{r['ram_avg']:.2f},{r['gpu_avg']:.2f},"
+                f"{r['gpu_max']:.2f},{r['vram_avg']:.2f},{r['mean_reward']:.2f},{r['std_reward']:.2f},"
+                f"{r['success_rate']:.2f},{r['avg_steps']:.2f}\n"
+            )
+    print(f"\n[+] Tabella salvata con successo in CSV: {csv_file}")
+    shutil.copyfile(csv_file, "benchmark_confronto_mappo.csv")
+
+    png_file = f"benchmark_confronto_mappo_{seed}.png"
+    # genera i grafici
+    if results_mappo and results_ppo:
+        generate_comparison_plots(results_mappo, results_ppo, output_image=png_file, seed=seed)
+        shutil.copyfile(png_file, "benchmark_confronto_mappo.png")
+    elif results_mappo:
+        # se c'è solo mappo genera il grafico dedicato
+        droni = [r["n_uavs"] for r in results_mappo]
+        fig, axes = plt.subplots(2, 2, figsize=(13, 9))
+        plt.subplots_adjust(hspace=0.35, wspace=0.25)
+        fig.suptitle(f"Analisi di Scalabilità e Consumo Risorse MAPPO (Seed {seed})", fontsize=15, fontweight="bold")
+
+        axes[0, 0].plot(droni, [r["cpu_avg"] for r in results_mappo], marker="o", color="#d9534f", label="CPU Media (%)")
+        axes[0, 0].plot(droni, [r["gpu_avg"] for r in results_mappo], marker="s", color="#0275d8", label="GPU Media (%)")
+        axes[0, 0].set_title("Utilizzo CPU e GPU (%)", fontweight="bold")
+        axes[0, 0].set_xlabel("Numero di Droni")
+        axes[0, 0].grid(True, linestyle="--", alpha=0.6)
+        axes[0, 0].legend()
+
+        axes[0, 1].plot(droni, [r["fps"] for r in results_mappo], marker="^", color="#5cb85c")
+        axes[0, 1].set_title("Throughput (FPS - Step/s)", fontweight="bold")
+        axes[0, 1].set_xlabel("Numero di Droni")
+        axes[0, 1].grid(True, linestyle="--", alpha=0.6)
+
+        axes[1, 0].plot(droni, [r["mean_reward"] for r in results_mappo], marker="o", color="#0275d8")
+        axes[1, 0].set_title("Reward Medio (Valutazione)", fontweight="bold")
+        axes[1, 0].set_xlabel("Numero di Droni")
+        axes[1, 0].grid(True, linestyle="--", alpha=0.6)
+
+        axes[1, 1].plot(droni, [r["ram_avg"] for r in results_mappo], marker="D", color="#6f42c1")
+        axes[1, 1].set_title("Utilizzo Memoria RAM (MB)", fontweight="bold")
+        axes[1, 1].set_xlabel("Numero di Droni")
+        axes[1, 1].grid(True, linestyle="--", alpha=0.6)
+
+        plt.savefig(png_file, dpi=300, bbox_inches="tight")
+        plt.close()
+        shutil.copyfile(png_file, "benchmark_confronto_mappo.png")
+        print(f"[+] Grafico MAPPO salvato in {png_file}")
+
+    print(f"\n[+] Benchmark completato con successo!\n")
+
 
 if __name__ == "__main__":
-    run_benchmark()
+    parser = argparse.ArgumentParser(description="Benchmark Scalabilità MAPPO vs PPO")
+    parser.add_argument("--timesteps", type=str, default=str(DEFAULT_TIMESTEPS), help=f"Step per run: singolo numero o lista separata da virgole per ogni drone (default: {DEFAULT_TIMESTEPS})")
+    parser.add_argument("--mode", type=str, default="both", choices=["both", "mappo", "ppo"], help="Algoritmi da testare (default: both)")
+    parser.add_argument("--drones", type=str, default="1,2,3,4", help="Quantità di droni separati da virgola (default: 1,2,3,4)")
+    parser.add_argument("--seed", type=int, default=SEED, help=f"Seed casuale per riproducibilità (default: {SEED})")
+    args = parser.parse_args()
+
+    counts = [int(x.strip()) for x in args.drones.split(",") if x.strip()]
+    run_benchmark(drone_counts=counts, timesteps_per_run=args.timesteps, mode=args.mode, seed=args.seed)

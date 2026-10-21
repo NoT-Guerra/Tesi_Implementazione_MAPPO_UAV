@@ -244,13 +244,66 @@ class MultiUAVEnv(gym.Env):
             obs.extend([ob[0], ob[1]])
         return np.array(obs, dtype=np.int32)
 
+    def get_agent_obs(self, agent_idx, normalized=False):
+        """
+        Restituisce l'osservazione locale per il drone specificato (agent_idx).
+        Struttura ego-centrica:
+        [self_x, self_y, target_x, target_y, obs_1_x, obs_1_y, ..., other_uav_1_x, other_uav_1_y, ...]
+        Se normalized=True, le coordinate sono divise per (self.size - 1.0).
+        """
+        scale = float(self.size - 1.0) if normalized else 1.0
+        
+        # 1. Coordinate proprie (ego-centriche)
+        obs = [
+            float(self._uav_locations[agent_idx][0]) / scale,
+            float(self._uav_locations[agent_idx][1]) / scale,
+            float(self._target_location[0]) / scale,
+            float(self._target_location[1]) / scale,
+        ]
+        # 2. Coordinate ostacoli
+        for ob in self._obstacles:
+            obs.extend([float(ob[0]) / scale, float(ob[1]) / scale])
+        # 3. Coordinate altri droni
+        for j in range(self.num_uavs):
+            if j != agent_idx:
+                obs.extend([
+                    float(self._uav_locations[j][0]) / scale,
+                    float(self._uav_locations[j][1]) / scale,
+                ])
+        return np.array(obs, dtype=np.float32)
+
+    def get_all_agent_obs(self, normalized=False):
+        """
+        Restituisce le osservazioni locali di tutti i droni: matrice (num_uavs, obs_dim).
+        """
+        return np.array([self.get_agent_obs(i, normalized=normalized) for i in range(self.num_uavs)], dtype=np.float32)
+
+    def get_global_state(self, normalized=False):
+        """
+        Restituisce lo stato globale per il Critic centralizzato di MAPPO.
+        Struttura canonica: [uav_0_x, uav_0_y, ..., uav_{N-1}_x, uav_{N-1}_y, target_x, target_y, obs...]
+        """
+        scale = float(self.size - 1.0) if normalized else 1.0
+        obs = []
+        for uav in self._uav_locations:
+            obs.extend([float(uav[0]) / scale, float(uav[1]) / scale])
+        obs.extend([float(self._target_location[0]) / scale, float(self._target_location[1]) / scale])
+        for ob in self._obstacles:
+            obs.extend([float(ob[0]) / scale, float(ob[1]) / scale])
+        return np.array(obs, dtype=np.float32)
+
     def _get_info(self):
         # Distanze di Manhattan di ciascun drone dal target comune
         distances = [
             int(np.linalg.norm(uav - self._target_location, ord=1))
             for uav in self._uav_locations
         ]
-        return {"distances": distances, "arrived": list(self._arrived)}
+        return {
+            "distances": distances,
+            "arrived": list(self._arrived),
+            "success": bool(all(self._arrived)),
+            "individual_rewards": getattr(self, "_last_ind_rewards", [0.0] * self.num_uavs),
+        }
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -285,6 +338,7 @@ class MultiUAVEnv(gym.Env):
 
         # Stato di arrivo dei droni
         self._arrived = [False] * self.num_uavs
+        self._last_ind_rewards = [0.0] * self.num_uavs
         self.step_count = 0
 
         observation = self._get_obs()
@@ -298,6 +352,7 @@ class MultiUAVEnv(gym.Env):
     def step(self, action):
         self.step_count += 1
         rewards = 0.0
+        ind_rewards = [0.0] * self.num_uavs
 
         # Converte l'azione in un array 1D di interi
         actions = np.array(action, dtype=int).flatten()
@@ -317,10 +372,12 @@ class MultiUAVEnv(gym.Env):
             # Controllo bordi mappa
             if np.any(candidate_pos < 0) or np.any(candidate_pos >= self.size):
                 rewards -= 10.0
+                ind_rewards[i] -= 10.0
                 new_locations[i] = self._uav_locations[i]
             # Controllo collisione ostacoli
             elif any(np.array_equal(candidate_pos, ob) for ob in self._obstacles):
                 rewards -= 10.0
+                ind_rewards[i] -= 10.0
                 new_locations[i] = self._uav_locations[i]
             else:
                 new_locations[i] = candidate_pos
@@ -346,6 +403,8 @@ class MultiUAVEnv(gym.Env):
 
                 if vertex_collision or edge_collision:
                     rewards -= 20.0  # penalità per scontro tra droni
+                    ind_rewards[i] -= 10.0
+                    ind_rewards[j] -= 10.0
                     # entrambi rimangono fermi alle coordinate precedenti
                     new_locations[i] = self._uav_locations[i]
                     new_locations[j] = self._uav_locations[j]
@@ -358,8 +417,12 @@ class MultiUAVEnv(gym.Env):
                 if np.array_equal(self._uav_locations[i], self._target_location):
                     self._arrived[i] = True
                     rewards += 100.0  # Bonus per aver raggiunto l'hangar
+                    ind_rewards[i] += 100.0
                 else:
                     rewards -= 1.0  # Penalità temporale per ogni drone ancora in volo
+                    ind_rewards[i] -= 1.0
+
+        self._last_ind_rewards = ind_rewards
 
         # 4. Condizioni di terminazione
         terminated = all(self._arrived)  # Vittoria: TUTTI i droni sono all'hangar!
