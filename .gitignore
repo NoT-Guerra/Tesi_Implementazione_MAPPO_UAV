@@ -1,0 +1,12 @@
+# Byte-compiled / cache Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# File temporanei di sistema e IDE
+.vscode/
+.idea/
+*.swp
+*.bak
+.DS_Store
+Thumbs.db

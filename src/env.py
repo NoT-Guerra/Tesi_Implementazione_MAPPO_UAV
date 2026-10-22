@@ -1,25 +1,58 @@
+"""
+Definizione degli ambienti di simulazione Gymnasium per la navigazione UAV su griglia 2D.
+Include SingleUAVEnv per singolo agente e MultiUAVEnv per la cooperazione multi-agente (MAPPO/PPO).
+"""
+
+import os
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
 import pygame
-import os
+def _load_image(filename):
+    """
+    Carica un'immagine da file ricercando nella cartella images/.
+    """
+    candidates = [
+        os.path.join("images", filename),
+        os.path.join(os.path.dirname(__file__), "..", "images", filename),
+        os.path.join(os.path.dirname(__file__), "images", filename),
+        os.path.join("Img", filename),
+        os.path.join("assets", filename),
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            try:
+                return pygame.image.load(path)
+            except (pygame.error, FileNotFoundError):
+                pass
+    return None
+
 
 class SingleUAVEnv(gym.Env):
     """
     Ambiente 2D su griglia per un singolo UAV.
-    L'obiettivo è raggiungere un target statico nel minor numero di step.
+    L'obiettivo è raggiungere un target statico (Hangar) nel minor numero di step,
+    evitando ostacoli e bordi della mappa.
     """
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 10}
 
     def __init__(self, render_mode=None, size=10, num_obstacles=4):
-        self.size = size  # dimensione della griglia nxn
-        self.window_size = 768  # dimensione della finestra pygame in pixel
+        """
+        Inizializza l'ambiente per un singolo UAV.
+
+        Args:
+            render_mode (str, optional): Modalità di rendering ('human' o 'rgb_array').
+            size (int): Dimensione della griglia NxN.
+            num_obstacles (int): Numero di ostacoli/montagne nella mappa.
+        """
+        self.size = size  # Dimensione della griglia NxN
+        self.window_size = 768  # Dimensione della finestra Pygame in pixel
         self.num_obstacles = num_obstacles
 
-        # lo stato è un vettore: [uav_x, uav_y, target_x, target_y] + 2 coordinate per ogni ostacolo
-        self.observation_space = spaces.Box(low=0, high=size-1, shape=(4 + self.num_obstacles * 2,), dtype=np.int32)
+        # Spazio delle osservazioni: [uav_x, uav_y, target_x, target_y] + coordinate degli ostacoli
+        self.observation_space = spaces.Box(low=0, high=size - 1, shape=(4 + self.num_obstacles * 2,), dtype=np.int32)
 
-        # 5 azioni: 0: fermo, 1: destra, 2: giù, 3: sinistra, 4: su
+        # Spazio delle azioni discrete: 0=Fermo, 1=Destra, 2=Giù, 3=Sinistra, 4=Su
         self.action_space = spaces.Discrete(5)
         self._action_to_direction = {
             0: np.array([0, 0]),
@@ -34,6 +67,12 @@ class SingleUAVEnv(gym.Env):
         self.clock = None
 
     def _get_obs(self):
+        """
+        Costruisce il vettore di osservazione dello stato corrente.
+
+        Returns:
+            np.ndarray: Vettore contenente le posizioni di UAV, target e ostacoli.
+        """
         obs = [
             self._agent_location[0], self._agent_location[1],
             self._target_location[0], self._target_location[1]
@@ -43,21 +82,36 @@ class SingleUAVEnv(gym.Env):
         return np.array(obs, dtype=np.int32)
 
     def _get_info(self):
-        # distanza di manhattan tra uav e target
+        """
+        Restituisce informazioni diagnostiche sull'episodio.
+
+        Returns:
+            dict: Dizionario contenente la distanza Manhattan dall'obiettivo.
+        """
         return {"distance": np.linalg.norm(self._agent_location - self._target_location, ord=1)}
 
     def reset(self, seed=None, options=None):
+        """
+        Reimposta l'ambiente posizionando casualmente UAV, target e ostacoli in celle distinte.
+
+        Args:
+            seed (int, optional): Seed per il generatore pseudo-casuale.
+            options (dict, optional): Opzioni aggiuntive di configurazione.
+
+        Returns:
+            tuple: (osservazione iniziale, dizionario di informazioni).
+        """
         super().reset(seed=seed)
-        
-        # posiziona l'agent casualmente
+
+        # Posizionamento casuale del drone
         self._agent_location = self.np_random.integers(0, self.size, size=2, dtype=np.int32)
-        
-        # posiziona il target casualmente, assicurandosi che non sia sopra l'agent
+
+        # Posizionamento casuale del target (assicurandosi che non coincida con il drone)
         self._target_location = self._agent_location
         while np.array_equal(self._target_location, self._agent_location):
             self._target_location = self.np_random.integers(0, self.size, size=2, dtype=np.int32)
-            
-        # posiziona le montagne casualmente
+
+        # Posizionamento casuale degli ostacoli in caselle libere
         self._obstacles = []
         for _ in range(self.num_obstacles):
             obs_loc = self.np_random.integers(0, self.size, size=2, dtype=np.int32)
@@ -66,9 +120,9 @@ class SingleUAVEnv(gym.Env):
                   any(np.array_equal(obs_loc, o) for o in self._obstacles):
                 obs_loc = self.np_random.integers(0, self.size, size=2, dtype=np.int32)
             self._obstacles.append(obs_loc)
-            
+
         self.step_count = 0
-            
+
         observation = self._get_obs()
         info = self._get_info()
 
@@ -78,38 +132,48 @@ class SingleUAVEnv(gym.Env):
         return observation, info
 
     def step(self, action):
+        """
+        Esegue un'azione di movimento nell'ambiente per un singolo passo temporale.
+
+        Args:
+            action (int): Indice dell'azione discreta scelta.
+
+        Returns:
+            tuple: (osservazione, reward, terminato, troncato, info).
+        """
         self.step_count += 1
         action = int(action)
         direction = self._action_to_direction[action]
-        
+
         new_location = self._agent_location + direction
-        reward = -1.0 # penalità per ogni passo
-        
-        # penalità se sbatte contro i bordi
+        reward = -1.0  # Penalità per ogni passo
+
+        # Controllo bordi mappa
         if np.any(new_location < 0) or np.any(new_location >= self.size):
             reward -= 10.0
-            
+
         new_location = np.clip(new_location, 0, self.size - 1)
-        
-        # check collisione montagne
+
+        # Controllo collisione ostacoli
         hit_obstacle = False
         for obs in self._obstacles:
             if np.array_equal(new_location, obs):
                 hit_obstacle = True
                 break
-                
+
         if hit_obstacle:
             reward -= 10.0
             new_location = self._agent_location
-            
+
         self._agent_location = new_location
-        
+
+        # Verifica raggiungimento target
         terminated = np.array_equal(self._agent_location, self._target_location)
         if terminated:
             reward += 100.0
-            
+
         truncated = self.step_count >= 100
-        
+
         observation = self._get_obs()
         info = self._get_info()
 
@@ -119,34 +183,22 @@ class SingleUAVEnv(gym.Env):
         return observation, reward, terminated, truncated, info
 
     def render(self):
+        """Esegue il rendering grafico dell'ambiente."""
         if self.render_mode == "human":
             return self._render_frame()
 
     def _render_frame(self):
+        """Disegna lo stato corrente dell'ambiente sul canvas di Pygame."""
         if self.window is None and self.render_mode == "human":
             pygame.init()
             pygame.display.init()
             self.window = pygame.display.set_mode((self.window_size, self.window_size))
             pygame.display.set_caption("UAV Target Search (PPO)")
-            
-            try:
-                img_path = os.path.join("Img", "drone.png")
-                self.drone_img = pygame.image.load(img_path)
-            except (FileNotFoundError, pygame.error):
-                self.drone_img = None
-                
-            try:
-                target_img_path = os.path.join("Img", "hangar.png")
-                self.hangar_img = pygame.image.load(target_img_path)
-            except (FileNotFoundError, pygame.error):
-                self.hangar_img = None
-                
-            try:
-                mountain_img_path = os.path.join("Img", "montagna.png")
-                self.mountain_img = pygame.image.load(mountain_img_path)
-            except (FileNotFoundError, pygame.error):
-                self.mountain_img = None
-            
+
+            self.drone_img = _load_image("drone.png")
+            self.hangar_img = _load_image("hangar.png")
+            self.mountain_img = _load_image("montagna.png")
+
         if self.clock is None and self.render_mode == "human":
             self.clock = pygame.time.Clock()
 
@@ -154,25 +206,29 @@ class SingleUAVEnv(gym.Env):
         canvas.fill((255, 255, 255))
         pix_square_size = (self.window_size / self.size)
 
+        # Disegno del target (Hangar)
         if hasattr(self, 'hangar_img') and self.hangar_img is not None:
             scaled_hangar = pygame.transform.scale(self.hangar_img, (int(pix_square_size * 1.2), int(pix_square_size * 1.2)))
             pos_x = self._target_location[0] * pix_square_size - (pix_square_size * 0.1)
             pos_y = self._target_location[1] * pix_square_size - (pix_square_size * 0.1)
             canvas.blit(scaled_hangar, (pos_x, pos_y))
-            
+
+        # Disegno degli ostacoli (Montagne)
         if hasattr(self, 'mountain_img') and self.mountain_img is not None:
             scaled_mountain = pygame.transform.scale(self.mountain_img, (int(pix_square_size * 1.0), int(pix_square_size * 1.0)))
             for obs in self._obstacles:
                 pos_x = obs[0] * pix_square_size
                 pos_y = obs[1] * pix_square_size
                 canvas.blit(scaled_mountain, (pos_x, pos_y))
-        
+
+        # Disegno del drone
         if hasattr(self, 'drone_img') and self.drone_img is not None:
             scaled_drone = pygame.transform.scale(self.drone_img, (int(pix_square_size * 0.8), int(pix_square_size * 0.8)))
             pos_x = self._agent_location[0] * pix_square_size + (pix_square_size * 0.1)
             pos_y = self._agent_location[1] * pix_square_size + (pix_square_size * 0.1)
             canvas.blit(scaled_drone, (pos_x, pos_y))
 
+        # Disegno della griglia
         for x in range(self.size + 1):
             pygame.draw.line(canvas, (200, 200, 200), (0, pix_square_size * x), (self.window_size, pix_square_size * x), width=2)
             pygame.draw.line(canvas, (200, 200, 200), (pix_square_size * x, 0), (pix_square_size * x, self.window_size), width=2)
@@ -186,6 +242,7 @@ class SingleUAVEnv(gym.Env):
             return np.transpose(np.array(pygame.surfarray.pixels3d(canvas)), axes=(1, 0, 2))
 
     def close(self):
+        """Chiude la finestra grafica e rilascia le risorse di Pygame."""
         if self.window is not None:
             pygame.display.quit()
             pygame.quit()
@@ -194,26 +251,33 @@ class SingleUAVEnv(gym.Env):
 class MultiUAVEnv(gym.Env):
     """
     Ambiente 2D su griglia parametrico per N droni (Multi-UAV).
-    Tutti i droni cooperano per raggiungere lo STESSO target (Hangar),
+    Tutti i droni cooperano per raggiungere lo stesso target (Hangar),
     evitando bordi, ostacoli e collisioni reciproche in volo.
     """
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 10}
 
     def __init__(self, render_mode=None, size=10, num_obstacles=4, num_uavs=2):
+        """
+        Inizializza l'ambiente multi-agente cooperativo.
+
+        Args:
+            render_mode (str, optional): Modalità di rendering ('human' o 'rgb_array').
+            size (int): Dimensione della griglia NxN.
+            num_obstacles (int): Numero di ostacoli/montagne.
+            num_uavs (int): Numero di droni nella flotta.
+        """
         super(MultiUAVEnv, self).__init__()
 
-        self.size = size  # dimensione griglia NxN
-        self.window_size = 768  # dimensione finestra Pygame in pixel
-        self.num_obstacles = num_obstacles  # numero di montagne/ostacoli
-        self.num_uavs = num_uavs  # PARAMETRICO: numero di droni nella flotta
+        self.size = size  # Dimensione griglia NxN
+        self.window_size = 768  # Dimensione finestra Pygame in pixel
+        self.num_obstacles = num_obstacles  # Numero di montagne/ostacoli
+        self.num_uavs = num_uavs  # Numero di droni nella flotta
         self.max_steps = 100
 
-        # Spazio delle Azioni: MultiDiscrete con 5 azioni per ciascun drone
-        # [0: Fermo, 1: Destra, 2: Giù, 3: Sinistra, 4: Su]
+        # Spazio delle azioni: MultiDiscrete con 5 azioni per ciascun drone (0: Fermo, 1: Destra, 2: Giù, 3: Sinistra, 4: Su)
         self.action_space = spaces.MultiDiscrete([5] * self.num_uavs)
 
-        # Spazio delle Osservazioni:
-        # [UAV_0_x, UAV_0_y, ..., UAV_N_x, UAV_N_y, Target_x, Target_y, Obs_1_x, Obs_1_y, ...]
+        # Spazio delle osservazioni globali: [UAV_0, ..., UAV_{N-1}, Target, Ostacoli]
         obs_shape = (self.num_uavs * 2) + 2 + (self.num_obstacles * 2)
         self.observation_space = spaces.Box(
             low=0, high=size - 1, shape=(obs_shape,), dtype=np.int32
@@ -233,13 +297,19 @@ class MultiUAVEnv(gym.Env):
         self.font = None
 
     def _get_obs(self):
+        """
+        Restituisce il vettore globale di osservazione dello stato.
+
+        Returns:
+            np.ndarray: Vettore contenente coordinate di tutti i droni, target e ostacoli.
+        """
         obs = []
-        # 1. Coordinate di tutti i droni
+        # Coordinate di tutti i droni
         for uav in self._uav_locations:
             obs.extend([uav[0], uav[1]])
-        # 2. Coordinate del Target comune
+        # Coordinate del target comune
         obs.extend([self._target_location[0], self._target_location[1]])
-        # 3. Coordinate degli ostacoli
+        # Coordinate degli ostacoli
         for ob in self._obstacles:
             obs.extend([ob[0], ob[1]])
         return np.array(obs, dtype=np.int32)
@@ -249,21 +319,27 @@ class MultiUAVEnv(gym.Env):
         Restituisce l'osservazione locale per il drone specificato (agent_idx).
         Struttura ego-centrica:
         [self_x, self_y, target_x, target_y, obs_1_x, obs_1_y, ..., other_uav_1_x, other_uav_1_y, ...]
-        Se normalized=True, le coordinate sono divise per (self.size - 1.0).
+
+        Args:
+            agent_idx (int): Indice del drone nella flotta.
+            normalized (bool): Se True, normalizza le coordinate in [0, 1].
+
+        Returns:
+            np.ndarray: Vettore di osservazione locale dell'agente.
         """
         scale = float(self.size - 1.0) if normalized else 1.0
-        
-        # 1. Coordinate proprie (ego-centriche)
+
+        # Coordinate proprie
         obs = [
             float(self._uav_locations[agent_idx][0]) / scale,
             float(self._uav_locations[agent_idx][1]) / scale,
             float(self._target_location[0]) / scale,
             float(self._target_location[1]) / scale,
         ]
-        # 2. Coordinate ostacoli
+        # Coordinate ostacoli
         for ob in self._obstacles:
             obs.extend([float(ob[0]) / scale, float(ob[1]) / scale])
-        # 3. Coordinate altri droni
+        # Coordinate altri droni
         for j in range(self.num_uavs):
             if j != agent_idx:
                 obs.extend([
@@ -274,14 +350,26 @@ class MultiUAVEnv(gym.Env):
 
     def get_all_agent_obs(self, normalized=False):
         """
-        Restituisce le osservazioni locali di tutti i droni: matrice (num_uavs, obs_dim).
+        Restituisce le osservazioni locali di tutti i droni nella flotta.
+
+        Args:
+            normalized (bool): Se True, normalizza le coordinate in [0, 1].
+
+        Returns:
+            np.ndarray: Matrice di forma (num_uavs, obs_dim).
         """
         return np.array([self.get_agent_obs(i, normalized=normalized) for i in range(self.num_uavs)], dtype=np.float32)
 
     def get_global_state(self, normalized=False):
         """
-        Restituisce lo stato globale per il Critic centralizzato di MAPPO.
-        Struttura canonica: [uav_0_x, uav_0_y, ..., uav_{N-1}_x, uav_{N-1}_y, target_x, target_y, obs...]
+        Restituisce lo stato globale dell'ambiente per il Critic centralizzato di MAPPO.
+        Struttura: [uav_0, ..., uav_{N-1}, target, ostacoli].
+
+        Args:
+            normalized (bool): Se True, normalizza le coordinate in [0, 1].
+
+        Returns:
+            np.ndarray: Vettore dello stato globale.
         """
         scale = float(self.size - 1.0) if normalized else 1.0
         obs = []
@@ -293,7 +381,13 @@ class MultiUAVEnv(gym.Env):
         return np.array(obs, dtype=np.float32)
 
     def _get_info(self):
-        # Distanze di Manhattan di ciascun drone dal target comune
+        """
+        Restituisce informazioni diagnostiche sull'episodio corrente.
+
+        Returns:
+            dict: Distanze dei droni, stato di arrivo, successo globale e reward individuali.
+        """
+        # Calcolo delle distanze Manhattan di ciascun drone dal target
         distances = [
             int(np.linalg.norm(uav - self._target_location, ord=1))
             for uav in self._uav_locations
@@ -306,15 +400,25 @@ class MultiUAVEnv(gym.Env):
         }
 
     def reset(self, seed=None, options=None):
+        """
+        Reimposta l'ambiente per un nuovo episodio posizionando entità in caselle univoche.
+
+        Args:
+            seed (int, optional): Seed casuale per la riproducibilità.
+            options (dict, optional): Opzioni aggiuntive.
+
+        Returns:
+            tuple: (osservazione iniziale, info diagnostiche).
+        """
         super().reset(seed=seed)
 
         occupied_positions = set()
 
-        # 1. Posiziona il target comune (Hangar)
+        # Posizionamento del target comune (Hangar)
         self._target_location = self.np_random.integers(0, self.size, size=2, dtype=np.int32)
         occupied_positions.add(tuple(self._target_location))
 
-        # 2. Posiziona gli ostacoli (Montagne)
+        # Posizionamento degli ostacoli (Montagne)
         self._obstacles = []
         for _ in range(self.num_obstacles):
             while True:
@@ -325,7 +429,7 @@ class MultiUAVEnv(gym.Env):
                     occupied_positions.add(tup)
                     break
 
-        # 3. Posiziona i droni in caselle libere distinte
+        # Posizionamento dei droni in caselle libere distinte
         self._uav_locations = []
         for _ in range(self.num_uavs):
             while True:
@@ -336,7 +440,7 @@ class MultiUAVEnv(gym.Env):
                     occupied_positions.add(tup)
                     break
 
-        # Stato di arrivo dei droni
+        # Inizializzazione dello stato di arrivo e contatore passi
         self._arrived = [False] * self.num_uavs
         self._last_ind_rewards = [0.0] * self.num_uavs
         self.step_count = 0
@@ -350,15 +454,24 @@ class MultiUAVEnv(gym.Env):
         return observation, info
 
     def step(self, action):
+        """
+        Avanza la simulazione applicando le azioni congiunte della flotta UAV.
+
+        Args:
+            action (array-like): Vettore contenente l'azione di ciascun drone.
+
+        Returns:
+            tuple: (osservazione, reward_globale, terminato, troncato, info).
+        """
         self.step_count += 1
         rewards = 0.0
         ind_rewards = [0.0] * self.num_uavs
 
-        # Converte l'azione in un array 1D di interi
+        # Conversione dell'azione in array
         actions = np.array(action, dtype=int).flatten()
         new_locations = [np.copy(loc) for loc in self._uav_locations]
 
-        # 1. Movimento candidato per ciascun drone che non sia già arrivato
+        # Movimento candidato per ciascun drone che non sia già arrivato
         for i in range(self.num_uavs):
             if self._arrived[i]:
                 # Il drone è già atterrato all'hangar: resta fermo
@@ -382,19 +495,19 @@ class MultiUAVEnv(gym.Env):
             else:
                 new_locations[i] = candidate_pos
 
-        # 2. Controllo collisioni Drone-Drone (vertice ed edge collision)
+        # Controllo collisioni tra droni (vertice ed edge collision)
         for i in range(self.num_uavs):
             for j in range(i + 1, self.num_uavs):
                 if self._arrived[i] and self._arrived[j]:
                     continue
 
-                # collisione di vertice: finiscono sulla stessa casella fuori dal target
+                # Collisione di vertice: finiscono sulla stessa casella fuori dal target
                 vertex_collision = (
                     np.array_equal(new_locations[i], new_locations[j])
                     and not np.array_equal(new_locations[i], self._target_location)
                 )
 
-                # collisione di spigolo (swap): scambio frontale di posizioni in volo
+                # Collisione di edge (swap): scambio di posizioni in volo
                 edge_collision = (
                     not self._arrived[i] and not self._arrived[j]
                     and np.array_equal(new_locations[i], self._uav_locations[j])
@@ -402,14 +515,14 @@ class MultiUAVEnv(gym.Env):
                 )
 
                 if vertex_collision or edge_collision:
-                    rewards -= 20.0  # penalità per scontro tra droni
+                    rewards -= 20.0  # Penalità per scontro tra droni
                     ind_rewards[i] -= 10.0
                     ind_rewards[j] -= 10.0
-                    # entrambi rimangono fermi alle coordinate precedenti
+                    # Entrambi rimangono fermi alle coordinate precedenti
                     new_locations[i] = self._uav_locations[i]
                     new_locations[j] = self._uav_locations[j]
 
-        # 3. Aggiorna posizioni e valuta arrivo all'hangar
+        # Aggiorna posizioni e valuta arrivo all'hangar
         for i in range(self.num_uavs):
             self._uav_locations[i] = np.clip(new_locations[i], 0, self.size - 1)
 
@@ -424,8 +537,8 @@ class MultiUAVEnv(gym.Env):
 
         self._last_ind_rewards = ind_rewards
 
-        # 4. Condizioni di terminazione
-        terminated = all(self._arrived)  # Vittoria: TUTTI i droni sono all'hangar!
+        # Condizioni di terminazione
+        terminated = all(self._arrived)  # Successo: tutti i droni sono all'hangar
         truncated = self.step_count >= self.max_steps
 
         observation = self._get_obs()
@@ -437,31 +550,21 @@ class MultiUAVEnv(gym.Env):
         return observation, rewards, terminated, truncated, info
 
     def render(self):
+        """Esegue il rendering grafico dell'ambiente."""
         if self.render_mode == "human":
             return self._render_frame()
 
     def _render_frame(self):
+        """Disegna lo stato corrente dell'ambiente e della flotta sul canvas Pygame."""
         if self.window is None and self.render_mode == "human":
             pygame.init()
             pygame.display.init()
             self.window = pygame.display.set_mode((self.window_size, self.window_size))
             pygame.display.set_caption("Flotta Multi-UAV (Target Comune)")
-
-            # Caricamento Sprites se presenti
-            try:
-                self.drone_img = pygame.image.load(os.path.join("Img", "drone.png"))
-            except (FileNotFoundError, pygame.error):
-                self.drone_img = None
-
-            try:
-                self.hangar_img = pygame.image.load(os.path.join("Img", "hangar.png"))
-            except (FileNotFoundError, pygame.error):
-                self.hangar_img = None
-
-            try:
-                self.mountain_img = pygame.image.load(os.path.join("Img", "montagna.png"))
-            except (FileNotFoundError, pygame.error):
-                self.mountain_img = None
+            
+            self.drone_img = _load_image("drone.png")
+            self.hangar_img = _load_image("hangar.png")
+            self.mountain_img = _load_image("montagna.png")
 
         if self.clock is None and self.render_mode == "human":
             self.clock = pygame.time.Clock()
@@ -470,7 +573,7 @@ class MultiUAVEnv(gym.Env):
         canvas.fill((255, 255, 255))
         pix_square_size = (self.window_size / self.size)
 
-        # 1. Disegna il Target Comune (Hangar)
+        # Disegno del target comune (Hangar)
         if hasattr(self, 'hangar_img') and self.hangar_img is not None:
             scaled_hangar = pygame.transform.scale(self.hangar_img, (int(pix_square_size * 1.2), int(pix_square_size * 1.2)))
             pos_x = self._target_location[0] * pix_square_size - (pix_square_size * 0.1)
@@ -482,7 +585,7 @@ class MultiUAVEnv(gym.Env):
                 pygame.Rect(pix_square_size * self._target_location, (pix_square_size, pix_square_size))
             )
 
-        # 2. Disegna gli Ostacoli (Montagne)
+        # Disegno degli ostacoli (Montagne)
         if hasattr(self, 'mountain_img') and self.mountain_img is not None:
             scaled_mountain = pygame.transform.scale(self.mountain_img, (int(pix_square_size * 1.0), int(pix_square_size * 1.0)))
             for obs in self._obstacles:
@@ -496,10 +599,10 @@ class MultiUAVEnv(gym.Env):
                     pygame.Rect(pix_square_size * obs, (pix_square_size, pix_square_size))
                 )
 
-        # Palette di colori per distinguere visivamente i droni
+        # Palette colori per distinguere visivamente i droni
         uav_colors = [(30, 144, 255), (255, 140, 0), (148, 0, 211), (0, 180, 0), (255, 20, 147)]
 
-        # 3. Disegna i Droni
+        # Disegno dei droni
         for i, uav in enumerate(self._uav_locations):
             pos_x = uav[0] * pix_square_size + (pix_square_size * 0.1)
             pos_y = uav[1] * pix_square_size + (pix_square_size * 0.1)
@@ -521,9 +624,7 @@ class MultiUAVEnv(gym.Env):
                     pix_square_size / 3,
                 )
 
-
-
-        # 4. Disegna la Griglia
+        # Disegno della griglia
         for x in range(self.size + 1):
             pygame.draw.line(canvas, (200, 200, 200), (0, pix_square_size * x), (self.window_size, pix_square_size * x), width=2)
             pygame.draw.line(canvas, (200, 200, 200), (pix_square_size * x, 0), (pix_square_size * x, self.window_size), width=2)
@@ -537,6 +638,7 @@ class MultiUAVEnv(gym.Env):
             return np.transpose(np.array(pygame.surfarray.pixels3d(canvas)), axes=(1, 0, 2))
 
     def close(self):
+        """Chiude la finestra grafica e rilascia le risorse di Pygame."""
         if self.window is not None:
             pygame.display.quit()
             pygame.quit()

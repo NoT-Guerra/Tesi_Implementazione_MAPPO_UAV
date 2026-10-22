@@ -1,9 +1,8 @@
 """
-Implementazione di MAPPO (Multi-Agent Proximal Policy Optimization) parametrica.
+Implementazione di MAPPO (Multi-Agent Proximal Policy Optimization) parametrico.
 Architettura CTDE (Centralized Training with Decentralized Execution) con Parameter Sharing.
 
-Adatta per navigazione e coordinamento di flotte UAV (da N=1 singolo drone fino a N droni).
-Compatibile con Gymnasium e MultiUAVEnv.
+Supporta flotte UAV scalabili (da N=1 a N droni) con osservazioni locali e valutazione.
 """
 
 import os
@@ -14,14 +13,27 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.distributions import Categorical
 
+try:
+    from torch.utils.tensorboard import SummaryWriter
+except ImportError:
+    SummaryWriter = None
+
 
 class ActorNetwork(nn.Module):
     """
-    Rete Neurale dell'Actor (Policy decentralizzata).
+    Rete neurale dell'Actor (Policy decentralizzata).
     Prende in input l'osservazione locale o_i dell'agente i (rappresentazione ego-centrica)
     e restituisce una distribuzione categorica sulle azioni discrete.
     """
     def __init__(self, obs_dim, action_dim=5, hidden_dim=128):
+        """
+        Inizializza gli strati della rete dell'Actor e applica l'inizializzazione ortogonale.
+
+        Args:
+            obs_dim (int): Dimensione del vettore di osservazione locale.
+            action_dim (int): Numero di azioni discrete disponibili.
+            hidden_dim (int): Dimensione dei layer nascosti.
+        """
         super().__init__()
         self.obs_dim = obs_dim
         self.action_dim = action_dim
@@ -44,10 +56,21 @@ class ActorNetwork(nn.Module):
         nn.init.orthogonal_(self.net[-1].weight, gain=0.01)
 
     def forward(self, obs):
+        """Calcola la distribuzione di probabilità categorica sulle azioni a partire dall'osservazione."""
         logits = self.net(obs)
         return Categorical(logits=logits)
 
     def get_action(self, obs, deterministic=False):
+        """
+        Campiona o seleziona l'azione e calcola la relativa log-probabilità.
+
+        Args:
+            obs (torch.Tensor): Tensore delle osservazioni locali.
+            deterministic (bool): Se True, seleziona l'azione con probabilità massima.
+
+        Returns:
+            tuple: (azione scelta, log-probabilità dell'azione).
+        """
         dist = self.forward(obs)
         if deterministic:
             action = torch.argmax(dist.logits, dim=-1)
@@ -57,6 +80,16 @@ class ActorNetwork(nn.Module):
         return action, log_prob
 
     def evaluate_actions(self, obs, actions):
+        """
+        Valuta le azioni per il calcolo della loss dell'Actor durante l'aggiornamento PPO.
+
+        Args:
+            obs (torch.Tensor): Tensore delle osservazioni locali.
+            actions (torch.Tensor): Azioni eseguite.
+
+        Returns:
+            tuple: (log-probabilità correnti, entropia della distribuzione).
+        """
         dist = self.forward(obs)
         log_prob = dist.log_prob(actions)
         entropy = dist.entropy()
@@ -65,11 +98,18 @@ class ActorNetwork(nn.Module):
 
 class CriticNetwork(nn.Module):
     """
-    Rete Neurale del Critic (Valutazione dello Stato Globale).
-    Architettura Centralizzata: durante l'addestramento (CTDE) riceve lo stato globale s
+    Rete neurale del Critic (Valutazione dello stato globale).
+    Architettura centralizzata: durante l'addestramento (CTDE) riceve lo stato globale s
     contenente le informazioni complete di tutti i droni, target e ostacoli.
     """
     def __init__(self, state_dim, hidden_dim=128):
+        """
+        Inizializza la rete neurale del Critic con inizializzazione ortogonale dei pesi.
+
+        Args:
+            state_dim (int): Dimensione del vettore dello stato globale.
+            hidden_dim (int): Dimensione dei layer nascosti.
+        """
         super().__init__()
         self.state_dim = state_dim
 
@@ -81,6 +121,7 @@ class CriticNetwork(nn.Module):
             nn.Linear(hidden_dim, 1)
         )
 
+        # Inizializzazione ortogonale dei pesi
         for name, param in self.net.named_parameters():
             if "weight" in name:
                 nn.init.orthogonal_(param, gain=np.sqrt(2))
@@ -89,6 +130,7 @@ class CriticNetwork(nn.Module):
         nn.init.orthogonal_(self.net[-1].weight, gain=1.0)
 
     def forward(self, state):
+        """Stima il valore scalare dello stato globale."""
         return self.net(state)
 
 
@@ -98,6 +140,16 @@ class MAPPORolloutBuffer:
     Memorizza transizioni multi-agente e calcola GAE (Generalized Advantage Estimation).
     """
     def __init__(self, buffer_size, num_uavs, obs_dim, state_dim, device="cpu"):
+        """
+        Inizializza la struttura dati del buffer di rollout.
+
+        Args:
+            buffer_size (int): Numero massimo di step temporali per rollout.
+            num_uavs (int): Numero di droni nella flotta.
+            obs_dim (int): Dimensione dell'osservazione locale.
+            state_dim (int): Dimensione dello stato globale.
+            device (str): Device PyTorch su cui allocare i tensori.
+        """
         self.buffer_size = buffer_size
         self.num_uavs = num_uavs
         self.obs_dim = obs_dim
@@ -106,6 +158,7 @@ class MAPPORolloutBuffer:
         self.reset()
 
     def reset(self):
+        """Azzera i buffer di memoria delle transizioni."""
         self.obs = np.zeros((self.buffer_size, self.num_uavs, self.obs_dim), dtype=np.float32)
         self.states = np.zeros((self.buffer_size, self.state_dim), dtype=np.float32)
         self.actions = np.zeros((self.buffer_size, self.num_uavs), dtype=np.int64)
@@ -118,6 +171,7 @@ class MAPPORolloutBuffer:
         self.step = 0
 
     def add(self, obs, state, actions, log_probs, reward, done, value):
+        """Registra una transizione multi-agente nel buffer."""
         self.obs[self.step] = obs
         self.states[self.step] = state
         self.actions[self.step] = actions
@@ -128,6 +182,15 @@ class MAPPORolloutBuffer:
         self.step += 1
 
     def compute_returns_and_advantages(self, last_val, last_done, gamma=0.99, gae_lambda=0.95):
+        """
+        Calcola i ritorni scontati e gli advantage con Generalized Advantage Estimation (GAE).
+
+        Args:
+            last_val (float): Valore stimato per lo stato finale di bootstrap.
+            last_done (bool): Flag di terminazione dell'ultimo step.
+            gamma (float): Fattore di sconto dei reward futuri.
+            gae_lambda (float): Parametro di trade-off bias-varianza per GAE.
+        """
         last_gae_lam = 0.0
         for t in reversed(range(self.buffer_size)):
             if t == self.buffer_size - 1:
@@ -143,25 +206,34 @@ class MAPPORolloutBuffer:
             self.returns[t] = self.advantages[t] + self.values[t]
 
     def get_batches(self, batch_size):
-        # Con Parameter Sharing, le transizioni dell'Actor vengono appiattite su tutti gli N agenti:
+        """
+        Suddivide le transizioni in mini-batch per l'ottimizzazione SGD di Actor e Critic.
+
+        Args:
+            batch_size (int): Dimensione di ciascun mini-batch.
+
+        Returns:
+            list: Lista di dizionari contenenti i tensori di addestramento.
+        """
+        # Con Parameter Sharing, le transizioni dell'Actor vengono appiattite su tutti gli N agenti
         total_transitions = self.buffer_size * self.num_uavs
-        
+
         flat_obs = self.obs.reshape(total_transitions, self.obs_dim)
         flat_actions = self.actions.reshape(total_transitions)
         flat_old_log_probs = self.log_probs.reshape(total_transitions)
-        
-        # Gli advantages calcolati dal critic centralizzato sono estesi a tutti i droni
+
+        # Gli advantage calcolati dal Critic centralizzato sono condivisi con tutti i droni
         repeated_advantages = np.repeat(self.advantages, self.num_uavs, axis=0).flatten()
-        # Normalizzazione degli Advantages
+        # Normalizzazione degli advantage
         adv_std = repeated_advantages.std()
         normalized_advantages = (repeated_advantages - repeated_advantages.mean()) / (adv_std + 1e-8)
 
-        # Buffer critic
+        # Buffer del Critic
         states = self.states
         returns = self.returns
         old_values = self.values
 
-        # Generazione indici casuali per mini-batch
+        # Generazione di indici casuali per i mini-batch
         actor_indices = np.random.permutation(total_transitions)
         critic_indices = np.random.permutation(self.buffer_size)
 
@@ -188,14 +260,14 @@ class MAPPORolloutBuffer:
 
 class MAPPO:
     """
-    Algoritmo MAPPO Parametrico (Multi-Agent PPO).
-    Supporta da 1 singolo drone (degenera in standard PPO) fino a N droni.
-    
-    Caratteristiche:
+    Algoritmo MAPPO parametrico (Multi-Agent Proximal Policy Optimization).
+    Supporta configurazioni da singolo drone (PPO standard) fino a N droni cooperanti.
+
+    Caratteristiche principali:
     - CTDE (Centralized Training, Decentralized Execution)
-    - Parameter Sharing omogeneo per la flotta UAV
-    - Rappresentazione osservazionale ego-centrica
-    - Algoritmo PPO con clipping e Generalized Advantage Estimation (GAE)
+    - Parameter Sharing tra tutti gli agenti della flotta
+    - Rappresentazione ego-centrica per l'Actor
+    - Clipping della policy e Generalized Advantage Estimation (GAE)
     """
     def __init__(
         self,
@@ -220,13 +292,16 @@ class MAPPO:
         device=None,
         seed=42,
     ):
+        """
+        Inizializza i moduli Actor-Critic, gli iperparametri PPO e i buffer di memoria.
+        """
         self.num_uavs = num_uavs
         self.action_dim = action_dim
         self.grid_size = grid_size
         self.num_obstacles = num_obstacles
         self.hidden_dim = hidden_dim
 
-        # Se non specificati, calcola le dimensioni in base alla formulazione di MultiUAVEnv
+        # Calcolo automatico delle dimensioni se non specificate
         # obs_dim = 2 (self) + 2 (target) + 2 * num_obstacles + 2 * (num_uavs - 1)
         if obs_dim is None:
             self.obs_dim = 2 * num_uavs + 2 + 2 * num_obstacles
@@ -251,17 +326,17 @@ class MAPPO:
         self.n_steps = n_steps
         self.seed = seed
 
-        # Rilevamento Device (CPU o CUDA)
+        # Rilevamento del device (CPU o CUDA)
         if device is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         else:
             self.device = torch.device(device)
 
-        # Riproducibilità
+        # Impostazione dei seed per la riproducibilità
         torch.manual_seed(seed)
         np.random.seed(seed)
 
-        # Inizializzazione Reti Neurali
+        # Inizializzazione delle reti neurali
         self.actor = ActorNetwork(self.obs_dim, self.action_dim, self.hidden_dim).to(self.device)
         self.critic = CriticNetwork(self.state_dim, self.hidden_dim).to(self.device)
 
@@ -280,18 +355,24 @@ class MAPPO:
 
     def extract_agent_observations(self, raw_obs):
         """
-        Dato un vettore di osservazione globale (o matrice), estrae le osservazioni
-        ego-centriche locali per ciascun drone: matrice di forma (num_uavs, obs_dim).
+        Estrae le osservazioni locali per ciascun drone dal vettore di stato raw.
+
+        Args:
+            raw_obs (np.ndarray): Vettore globale dell'ambiente.
+
+        Returns:
+            np.ndarray: Matrice delle osservazioni locali di forma (num_uavs, obs_dim).
         """
         raw_obs = np.array(raw_obs, dtype=np.float32).flatten()
         n = self.num_uavs
         m = self.num_obstacles
 
-        # Parsing del vettore raw [uav_0, ..., uav_{N-1}, target, obs_0, ..., obs_{M-1}]
+        # Parsing del vettore raw [uav_0, ..., uav_{N-1}, target, ostacoli]
         uavs = [raw_obs[2 * i : 2 * i + 2] for i in range(n)]
         target = raw_obs[2 * n : 2 * n + 2]
         obstacles = raw_obs[2 * n + 2 : 2 * n + 2 + 2 * m]
 
+        # Costruzione del vettore per ciascun drone
         all_obs = []
         for i in range(n):
             obs_i = list(uavs[i]) + list(target) + list(obstacles)
@@ -304,9 +385,14 @@ class MAPPO:
 
     def predict(self, obs, deterministic=True):
         """
-        Interfaccia compatibile con Stable-Baselines3.
-        Accetta osservazioni locali (num_uavs, obs_dim) oppure l'osservazione raw dall'ambiente,
-        e restituisce le azioni scelte da tutti i droni.
+        Interfaccia di inferenza compatibile con Stable-Baselines3.
+
+        Args:
+            obs: Osservazioni locali (num_uavs, obs_dim) o vettore globale raw.
+            deterministic (bool): Se True, esegue l'azione con probabilità massima.
+
+        Returns:
+            tuple: (azioni scelte per tutti i droni, None).
         """
         obs_array = np.array(obs, dtype=np.float32)
         if obs_array.ndim == 1:
@@ -329,7 +415,14 @@ class MAPPO:
 
     def get_actions_and_values(self, agent_obs, global_state):
         """
-        Seleziona le azioni campionando dalla policy e calcola la stima del valore dallo stato globale.
+        Campiona le azioni dalla policy e calcola la stima di valore dallo stato globale.
+
+        Args:
+            agent_obs (np.ndarray): Osservazioni locali dei droni.
+            global_state (np.ndarray): Stato globale per il Critic.
+
+        Returns:
+            tuple: (azioni, log_probs, valore stimato dallo stato).
         """
         self.actor.eval()
         self.critic.eval()
@@ -348,7 +441,10 @@ class MAPPO:
 
     def train_step(self):
         """
-        Esegue un aggiornamento PPO con mini-batch SGD su Actor e Critic.
+        Esegue l'aggiornamento dei gradienti con mini-batch SGD su Actor e Critic.
+
+        Returns:
+            dict: Valori medi delle loss di Actor, Critic ed entropia.
         """
         self.actor.train()
         self.critic.train()
@@ -361,7 +457,7 @@ class MAPPO:
 
         for _ in range(self.ppo_epochs):
             for batch in batches:
-                # aggiorna l'actor
+                # Aggiornamento dell'Actor con objective PPO clipped ed entropia
                 new_log_probs, entropy = self.actor.evaluate_actions(
                     batch["actor_obs"], batch["actor_actions"]
                 )
@@ -376,7 +472,7 @@ class MAPPO:
                 nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
                 self.actor_optimizer.step()
 
-                # aggiorna il critic
+                # Aggiornamento del Critic con value loss clipped
                 current_values = self.critic(batch["critic_states"]).squeeze(-1)
                 value_pred_clipped = batch["critic_old_values"].squeeze(-1) + torch.clamp(
                     current_values - batch["critic_old_values"].squeeze(-1),
@@ -402,14 +498,32 @@ class MAPPO:
             "entropy": float(np.mean(entropies)),
         }
 
-    def learn(self, env, total_timesteps=100000, verbose=1, log_interval=10):
+    def learn(self, env, total_timesteps=100000, verbose=1, log_interval=10, tensorboard_log=None):
         """
-        Ciclo completo di addestramento per total_timesteps step di simulazione.
+        Esegue il ciclo completo di addestramento su total_timesteps step di simulazione.
+
+        Args:
+            env: Istanza dell'ambiente di simulazione MultiUAVEnv.
+            total_timesteps (int): Numero totale di passi di interazione.
+            verbose (int): Livello di verbosità (0 o 1).
+            log_interval (int): Frequenza di stampa delle metriche (in aggiornamenti).
+            tensorboard_log (str, optional): Cartella di destinazione per i log TensorBoard.
+
+        Returns:
+            dict: Riepilogo delle metriche finali di addestramento.
         """
         start_time = time.time()
         obs, info = env.reset(seed=self.seed)
 
-        # estrae osservazioni e stato globale
+        # Inizializzazione di TensorBoard
+        writer = None
+        if tensorboard_log is not None and SummaryWriter is not None:
+            tb_dir = os.path.join(tensorboard_log, f"MAPPO_{self.num_uavs}_UAV_{self.seed}")
+            writer = SummaryWriter(log_dir=tb_dir)
+            if verbose:
+                print(f"TensorBoard attivo in: {tb_dir}")
+
+        # Estrazione delle osservazioni locali e dello stato globale
         if hasattr(env, "get_all_agent_obs"):
             agent_obs = env.get_all_agent_obs()
             global_state = env.get_global_state()
@@ -427,22 +541,23 @@ class MAPPO:
 
         if verbose:
             drone_str = f"{self.num_uavs} dron{'e' if self.num_uavs == 1 else 'i'}"
-            print(f"[*] Inizio addestramento MAPPO per {drone_str} ({total_timesteps:,} step totali)")
-            print(f"[*] Dimensione Input: Actor={self.obs_dim}, Critic={self.state_dim} | Device: {self.device}")
+            print(f"Inizio addestramento MAPPO per {drone_str} ({total_timesteps:,} step totali)")
+            print(f"Dimensione Input: Actor={self.obs_dim}, Critic={self.state_dim} | Device: {self.device}")
 
+        # Ciclo principale di campionamento e interazione
         while total_steps < total_timesteps:
             self.buffer.reset()
 
             for step_in_buffer in range(self.n_steps):
                 actions, log_probs, value = self.get_actions_and_values(agent_obs, global_state)
 
-                # adatta l'azione per l'ambiente
+                # Adattamento del formato dell'azione per l'ambiente
                 env_action = actions if self.num_uavs > 1 else actions[0]
 
                 next_obs, reward, terminated, truncated, info = env.step(env_action)
                 done = terminated or truncated
 
-                # salva la transizione nel buffer
+                # Memorizzazione della transizione nel buffer di rollout
                 self.buffer.add(agent_obs, global_state, actions, log_probs, reward, done, value)
 
                 current_ep_reward += reward
@@ -484,45 +599,68 @@ class MAPPO:
                 last_value, done, self.gamma, self.gae_lambda
             )
 
-            # Esegue l'aggiornamento dei gradienti
+            # Aggiornamento dei pesi delle reti neurali
             losses = self.train_step()
             update_count += 1
 
-            if verbose and (update_count % log_interval == 0 or total_steps >= total_timesteps):
+            # Logging periodico a terminale e su TensorBoard
+            if update_count % log_interval == 0 or total_steps >= total_timesteps:
                 elapsed = time.time() - start_time
                 fps = total_steps / elapsed if elapsed > 0 else 0
-                avg_rew = np.mean(ep_rewards[-20:]) if ep_rewards else 0.0
-                succ_rate = (np.mean(ep_successes[-20:]) * 100) if ep_successes else 0.0
-                print(
-                    f"[Step {total_steps:>7}/{total_timesteps}] "
-                    f"FPS: {fps:>5.0f} | "
-                    f"Reward Medio: {avg_rew:>7.2f} | "
-                    f"Success Rate: {succ_rate:>5.1f}% | "
-                    f"Loss Actor: {losses['actor_loss']:>6.3f} | "
-                    f"Loss Critic: {losses['critic_loss']:>6.3f}"
-                )
+                avg_rew = np.mean(ep_rewards[-100:]) if ep_rewards else 0.0
+                succ_rate = (np.mean(ep_successes[-100:]) * 100) if ep_successes else 0.0
+
+                if verbose:
+                    print(
+                        f"[Step {total_steps:>7}/{total_timesteps}] "
+                        f"FPS: {fps:>5.0f} | "
+                        f"Reward Medio: {avg_rew:>7.2f} | "
+                        f"Success Rate: {succ_rate:>5.1f}% | "
+                        f"Loss Actor: {losses['actor_loss']:>6.3f} | "
+                        f"Loss Critic: {losses['critic_loss']:>6.3f}"
+                    )
+
+                if writer is not None:
+                    writer.add_scalar("rollout/ep_rew_mean", avg_rew, total_steps)
+                    writer.add_scalar("rollout/success_rate", succ_rate, total_steps)
+                    writer.add_scalar("train/actor_loss", losses["actor_loss"], total_steps)
+                    writer.add_scalar("train/critic_loss", losses["critic_loss"], total_steps)
+                    writer.add_scalar("train/entropy", losses["entropy"], total_steps)
+                    writer.add_scalar("time/fps", fps, total_steps)
+
+        if writer is not None:
+            writer.flush()
+            writer.close()
 
         if verbose:
             total_elapsed = time.time() - start_time
-            print(f"[+] Addestramento completato in {total_elapsed:.2f}s ({total_steps / total_elapsed:.0f} FPS totali)")
+            print(f"Addestramento completato in {total_elapsed:.2f}s ({total_steps / total_elapsed:.0f} FPS totali)")
 
         return {
             "total_timesteps": total_steps,
             "elapsed_time": time.time() - start_time,
             "episodes": len(ep_rewards),
-            "mean_reward": float(np.mean(ep_rewards[-50:])) if ep_rewards else 0.0,
-            "success_rate": float(np.mean(ep_successes[-50:])) if ep_successes else 0.0,
+            "mean_reward": float(np.mean(ep_rewards[-100:])) if ep_rewards else 0.0,
+            "success_rate": float(np.mean(ep_successes[-100:])) if ep_successes else 0.0,
         }
 
     def evaluate(self, env, n_eval_episodes=10, deterministic=True):
         """
-        Valuta le prestazioni della policy per n_eval_episodes episodi.
-        Restituisce (mean_reward, std_reward, success_rate, avg_steps).
+        Valuta le prestazioni della policy addestrata su un dato numero di episodi.
+
+        Args:
+            env: Ambiente di simulazione.
+            n_eval_episodes (int): Numero di episodi di valutazione.
+            deterministic (bool): Se True, utilizza inferenza deterministica.
+
+        Returns:
+            tuple: (reward medio, deviazione standard reward, success rate percentuale, passi medi).
         """
         rewards = []
         successes = []
         steps_list = []
 
+        # Loop di valutazione sugli episodi di test
         for _ in range(n_eval_episodes):
             obs, info = env.reset()
             done = False
@@ -551,7 +689,10 @@ class MAPPO:
 
     def save(self, filepath):
         """
-        Salva i pesi delle reti neurali e la configurazione dell'agente MAPPO.
+        Salva i pesi delle reti neurali e gli iperparametri dell'agente MAPPO in un file .pt.
+
+        Args:
+            filepath (str): Percorso del checkpoint da salvare.
         """
         if not filepath.endswith(".pt"):
             filepath = filepath + ".pt"
@@ -587,7 +728,14 @@ class MAPPO:
     @classmethod
     def load(cls, filepath, device=None):
         """
-        Carica un modello MAPPO precedentemente salvato.
+        Carica un checkpoint salvato e ricostruisce l'agente MAPPO.
+
+        Args:
+            filepath (str): Percorso del file .pt.
+            device (str, optional): Device su cui caricare il modello.
+
+        Returns:
+            MAPPO: Istanza dell'agente con pesi e iperparametri ripristinati.
         """
         if not filepath.endswith(".pt"):
             filepath = filepath + ".pt"
