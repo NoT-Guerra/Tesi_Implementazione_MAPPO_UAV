@@ -1,0 +1,3 @@
+Droni,Algoritmo,Num_Semi,Semi_Utilizzati,Timesteps,Reward_Medio_mean,Reward_Medio_std,Success_Rate_pct_mean,Success_Rate_pct_std,Avg_Steps_mean,Avg_Steps_std,Tempo_s_mean,Tempo_s_std,FPS_mean,FPS_std,CPU_Media_pct_mean,CPU_Media_pct_std,CPU_Picco_pct_mean,CPU_Picco_pct_std,RAM_MB_mean,RAM_MB_std,GPU_Media_pct_mean,GPU_Media_pct_std,VRAM_MB_mean,VRAM_MB_std
+4,MAPPO,3,42-123-999,4000000,-1083.33,96.54,18.00,6.56,84.15,5.83,5375.56,159.87,744.5,22.5,795.89,0.22,824.50,1.01,354.50,10.60,21.87,0.15,1176.44,100.52
+4,PPO,3,42-123-999,4000000,-1011.57,163.14,41.00,7.55,63.12,6.73,3447.13,67.26,1160.7,22.4,424.96,4.61,821.50,1.15,355.87,7.74,21.79,0.08,1239.99,4.69

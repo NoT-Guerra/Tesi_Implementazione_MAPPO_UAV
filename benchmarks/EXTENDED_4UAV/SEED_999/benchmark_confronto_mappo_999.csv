@@ -1,0 +1,3 @@
+Droni,Algoritmo,Timesteps,Tempo_s,FPS,CPU_Media_pct,CPU_Picco_pct,RAM_MB,GPU_Media_pct,GPU_Picco_pct,VRAM_MB,Reward_Medio,Reward_Std,Success_Rate_pct,Avg_Steps
+4,MAPPO,4000000,5460.68,732.5,796.12,823.60,361.70,21.77,66.00,1233.06,-1134.57,1536.59,17.00,85.08
+4,PPO,4000000,3403.21,1175.4,428.05,821.90,358.23,21.85,68.00,1237.30,-1138.18,1546.95,33.00,70.10
