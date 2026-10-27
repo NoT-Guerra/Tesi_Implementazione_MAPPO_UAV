@@ -10,7 +10,6 @@ import sys
 import time
 import datetime
 import argparse
-import ctypes
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -35,26 +34,6 @@ from aggregate_benchmarks import (
     load_and_group_benchmarks,
     find_benchmark_csvs
 )
-
-
-def set_windows_sleep_prevention(enable=True):
-    """
-    Impedisce al sistema operativo Windows di andare in sospensione durante la notte.
-    """
-    if os.name != "nt":
-        return
-    try:
-        if enable:
-            # ES_CONTINUOUS (0x80000000) | ES_SYSTEM_REQUIRED (0x00000001)
-            ctypes.windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001)
-            print("[+] Protezione sospensione Windows ATTIVATA (il PC rimarra attivo tutta la notte).")
-        else:
-            # Ripristina lo stato predefinito di Windows
-            ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
-            print("[+] Protezione sospensione Windows DISATTIVATA.")
-    except Exception as e:
-        print(f"[!] Avviso gestione sleep Windows: {e}")
-
 
 def plot_4uav_comparison(stats, seeds, output_png):
     """
@@ -141,10 +120,8 @@ def run_single_algorithm(algo, uavs, timesteps, seed, save_dir, models_dir, tb_l
     """
     Esegue l'addestramento completo di un singolo algoritmo a 4 UAV con monitoraggio risorse e salvataggio checkpoint.
     """
-    print("\n" + "-" * 75)
     now_str = datetime.datetime.now().strftime("%H:%M:%S")
     print(f"[{now_str}] AVVIO RUN: {algo.upper()} | {uavs} UAV | {timesteps:,} step | Seed {seed}")
-    print("-" * 75)
 
     env = MultiUAVEnv(size=10, num_obstacles=4, num_uavs=uavs)
 
@@ -260,76 +237,54 @@ def main():
     suite_start_time = time.time()
     start_dt = datetime.datetime.now().strftime("%d/%m/%Y alle %H:%M:%S")
 
-    print("\n" + "=" * 80)
     print(" SUITE NOTTURNA: STUDIO DI CONVERGENZA ASINTOTICA (4 UAV)")
     print(f" Avvio: {start_dt}")
     print(f" Configurazione: {args.uavs} Droni | {args.timesteps:,} step | Algoritmi: {[a.upper() for a in algos]}")
     print(f" Semi: {seeds} | Totale run pianificate: {total_runs}")
-    print(f" Destinazione Benchmark:   {args.save_dir}")
-    print(f" Destinazione Modelli:     {args.models_dir}")
-    print(f" Destinazione TensorBoard: {args.tb_log}")
-    print("=" * 80)
-
-    # Attivazione sleep prevention
-    set_windows_sleep_prevention(True)
 
     current_run = 0
-    try:
-        for seed in seeds:
-            seed_dir = os.path.join(args.save_dir, f"SEED_{seed}")
-            seed_results = []
+    for seed in seeds:
+        seed_dir = os.path.join(args.save_dir, f"SEED_{seed}")
+        seed_results = []
 
-            for algo in algos:
-                current_run += 1
-                print(f"\n>>> AVANZAMENTO SUITE NOTTURNA: [{current_run}/{total_runs}] (Seed {seed} - {algo.upper()}) <<<")
-                res = run_single_algorithm(
-                    algo=algo,
-                    uavs=args.uavs,
-                    timesteps=args.timesteps,
-                    seed=seed,
-                    save_dir=seed_dir,
-                    models_dir=args.models_dir,
-                    tb_log=args.tb_log,
-                    eval_episodes=args.eval_episodes
-                )
-                seed_results.append(res)
+        for algo in algos:
+            current_run += 1
+            print(f"\n>>> AVANZAMENTO SUITE NOTTURNA: [{current_run}/{total_runs}] (Seed {seed} - {algo.upper()}) <<<")
+            res = run_single_algorithm(
+                algo=algo,
+                uavs=args.uavs,
+                timesteps=args.timesteps,
+                seed=seed,
+                save_dir=seed_dir,
+                models_dir=args.models_dir,
+                tb_log=args.tb_log,
+                eval_episodes=args.eval_episodes
+            )
+            seed_results.append(res)
 
-            save_seed_csv(seed_results, seed_dir, seed)
+        save_seed_csv(seed_results, seed_dir, seed)
 
-        # Aggregazione finale multi-seed
-        print("\n" + "=" * 80)
-        print(" ELABORAZIONE E AGGREGAZIONE STATISTICA DEI RISULTATI NOTTURNI")
-        print("=" * 80)
+    seed_files = find_benchmark_csvs(args.save_dir, seeds)
+    if seed_files:
+        grouped_data, seeds_used = load_and_group_benchmarks(seed_files)
+        stats = compute_statistics(grouped_data)
 
-        seed_files = find_benchmark_csvs(args.save_dir, seeds)
-        if seed_files:
-            grouped_data, seeds_used = load_and_group_benchmarks(seed_files)
-            stats = compute_statistics(grouped_data)
+        out_csv = os.path.join(args.save_dir, "benchmark_aggregato_multi_seed.csv")
+        out_md = os.path.join(args.save_dir, "benchmark_aggregato_multi_seed.md")
+        out_png = os.path.join(args.save_dir, "benchmark_aggregato_multi_seed.png")
 
-            out_csv = os.path.join(args.save_dir, "benchmark_aggregato_multi_seed.csv")
-            out_md = os.path.join(args.save_dir, "benchmark_aggregato_multi_seed.md")
-            out_png = os.path.join(args.save_dir, "benchmark_aggregato_multi_seed.png")
-
-            export_aggregated_csv(stats, out_csv)
-            export_markdown_and_print_summary(stats, seeds_used, out_md)
-            plot_4uav_comparison(stats, seeds_used, out_png)
-
-    finally:
-        set_windows_sleep_prevention(False)
+        export_aggregated_csv(stats, out_csv)
+        export_markdown_and_print_summary(stats, seeds_used, out_md)
+        plot_4uav_comparison(stats, seeds_used, out_png)
 
     suite_duration = time.time() - suite_start_time
     hours = int(suite_duration // 3600)
     minutes = int((suite_duration % 3600) // 60)
     end_dt = datetime.datetime.now().strftime("%d/%m/%Y alle %H:%M:%S")
 
-    print("\n" + "#" * 80)
-    print(f" SUITE NOTTURNA COMPLETATA CON SUCCESSO!")
+    print(f" SUITE NOTTURNA COMPLETATA CON SUCCESSO")
     print(f" Terminato: {end_dt}")
     print(f" Tempo totale impiegato: {hours} ore e {minutes} minuti ({suite_duration:.1f} secondi)")
-    print(f" Modelli (.pt / .zip) salvati in:       {args.models_dir}")
-    print(f" Benchmark e grafici salvati in:        {args.save_dir}")
-    print(f" Log TensorBoard salvati in:            {args.tb_log}")
-    print("#" * 80 + "\n")
 
 
 if __name__ == "__main__":
