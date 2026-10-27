@@ -26,69 +26,101 @@ def parse_args():
     parser.add_argument("--size", type=int, default=10, help="Dimensione griglia")
     parser.add_argument("--obstacles", type=int, default=4, help="Numero di ostacoli")
     parser.add_argument("--seed", type=int, default=42, help="Seed")
+    parser.add_argument("--model-path", type=str, default=None, help="Percorso esplicito al file checkpoint (.pt o .zip)")
+    parser.add_argument("--models-dir", type=str, default=None, help="Cartella contenente i modelli salvati (es. models/EXTENDED_4UAV)")
     return parser.parse_args()
 
 
-def load_model(algo, num_uavs, seed=42):
+def load_model(algo, num_uavs, seed=42, model_path=None, models_dir=None):
     """
-    Carica il modello addestrato (MAPPO o PPO) ricercando i percorsi e pattern standard.
+    Carica il modello addestrato (MAPPO o PPO) ricercando i percorsi e pattern standard,
+    inclusi models/EXTENDED_4UAV/ e models/SEED_*/.
 
     Args:
         algo (str): Algoritmo atteso ('mappo' o 'ppo').
         num_uavs (int): Numero di UAV per cui caricare la policy.
         seed (int): Seed utilizzato durante il salvataggio.
+        model_path (str, optional): Percorso specifico fornito da CLI.
+        models_dir (str, optional): Cartella modelli fornita da CLI.
 
     Returns:
         tuple: (modello caricato, nome algoritmo effettivo, percorso del file)
     """
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    models_dir = os.path.join(project_root, "models")
+    base_models_dir = os.path.join(project_root, "models")
+
+    # 1. Se l'utente specifica un percorso esatto
+    if model_path:
+        candidates = [
+            model_path,
+            os.path.join(project_root, model_path),
+            f"{model_path}.pt",
+            f"{model_path}.zip",
+        ]
+        for c in candidates:
+            if os.path.exists(c):
+                if c.endswith(".pt") or algo.lower() == "mappo":
+                    print(f"[+] Caricamento modello MAPPO da: {c}")
+                    return MAPPO.load(c), "mappo", c
+                else:
+                    from stable_baselines3 import PPO
+                    print(f"[+] Caricamento modello PPO da: {c}")
+                    return PPO.load(c), "ppo", c
+        raise FileNotFoundError(f"File modello specificato non trovato: '{model_path}'")
+
+    # 2. Directory di ricerca prioritarie
+    search_dirs = []
+    if models_dir:
+        search_dirs.append(models_dir)
+        search_dirs.append(os.path.join(project_root, models_dir))
+
+    search_dirs.extend([
+        os.path.join(base_models_dir, "EXTENDED_4UAV"),
+        os.path.join(base_models_dir, f"SEED_{seed}"),
+        base_models_dir,
+        os.path.join("models", "EXTENDED_4UAV"),
+        os.path.join("models", f"SEED_{seed}"),
+        "models",
+        "."
+    ])
 
     if algo.lower() == "mappo":
-        # Ricerca del checkpoint MAPPO (.pt) nei percorsi standard
-        names_to_try = [
-            os.path.join("models", f"mappo_uav_{num_uavs}_{seed}.pt"),
-            os.path.join(models_dir, f"mappo_uav_{num_uavs}_{seed}.pt"),
-            os.path.join("models", f"mappo_uav_{num_uavs}.pt"),
-            os.path.join(models_dir, f"mappo_uav_{num_uavs}.pt"),
-            f"mappo_uav_{num_uavs}_{seed}.pt",
-            f"mappo_uav_{num_uavs}.pt",
-        ]
+        names_to_try = []
+        for sdir in search_dirs:
+            names_to_try.extend([
+                os.path.join(sdir, f"mappo_uav_{num_uavs}_{seed}.pt"),
+                os.path.join(sdir, f"mappo_uav_{num_uavs}.pt"),
+            ])
+
         for name in names_to_try:
             if os.path.exists(name):
                 print(f"[+] Caricamento modello MAPPO da: {name}")
                 return MAPPO.load(name), "mappo", name
 
         # Se non trova il modello MAPPO, tenta il fallback automatico su PPO
-        fallback_names = [
-            os.path.join("models", f"ppo_multi_uav_{num_uavs}_{seed}.zip"),
-            os.path.join(models_dir, f"ppo_multi_uav_{num_uavs}_{seed}.zip"),
-            os.path.join("models", f"ppo_multi_uav_{num_uavs}.zip"),
-            os.path.join(models_dir, f"ppo_multi_uav_{num_uavs}.zip"),
-            f"ppo_multi_uav_{num_uavs}_{seed}.zip",
-            f"ppo_multi_uav_{num_uavs}.zip",
-        ]
+        fallback_names = []
+        for sdir in search_dirs:
+            fallback_names.extend([
+                os.path.join(sdir, f"ppo_multi_uav_{num_uavs}_{seed}.zip"),
+                os.path.join(sdir, f"ppo_multi_uav_{num_uavs}.zip"),
+            ])
         for fb in fallback_names:
             if os.path.exists(fb):
                 from stable_baselines3 import PPO
                 print(f"[!] Modello MAPPO non trovato. Fallback automatico su modello PPO: {fb}")
                 return PPO.load(fb), "ppo", fb
 
-        raise FileNotFoundError(f"Nessun modello trovato per N={num_uavs}. Esegui prima train.py!")
+        raise FileNotFoundError(f"Nessun modello trovato per N={num_uavs} (seed={seed}). Controlla i percorsi dei modelli!")
 
     else:
-        # Ricerca del modello PPO baseline compresso (.zip)
         from stable_baselines3 import PPO
-        names_to_try = [
-            os.path.join("models", f"ppo_multi_uav_{num_uavs}_{seed}"),
-            os.path.join(models_dir, f"ppo_multi_uav_{num_uavs}_{seed}"),
-            os.path.join("models", f"ppo_multi_uav_{num_uavs}"),
-            os.path.join(models_dir, f"ppo_multi_uav_{num_uavs}"),
-            f"ppo_multi_uav_{num_uavs}_{seed}",
-            f"ppo_multi_uav_{num_uavs}",
-            os.path.join("models", "ppo_single_uav") if num_uavs == 1 else "",
-            os.path.join(models_dir, "ppo_single_uav") if num_uavs == 1 else "",
-        ]
+        names_to_try = []
+        for sdir in search_dirs:
+            names_to_try.extend([
+                os.path.join(sdir, f"ppo_multi_uav_{num_uavs}_{seed}"),
+                os.path.join(sdir, f"ppo_multi_uav_{num_uavs}"),
+                os.path.join(sdir, "ppo_single_uav") if num_uavs == 1 else "",
+            ])
         for name in names_to_try:
             if not name:
                 continue
@@ -97,7 +129,7 @@ def load_model(algo, num_uavs, seed=42):
                 print(f"[+] Caricamento modello PPO da: {zip_name}")
                 return PPO.load(name), "ppo", zip_name
 
-        raise FileNotFoundError(f"Modello PPO non trovato per N={num_uavs}. Esegui prima train.py!")
+        raise FileNotFoundError(f"Modello PPO non trovato per N={num_uavs} (seed={seed}). Controlla i percorsi dei modelli!")
 
 
 def main():
@@ -117,7 +149,13 @@ def main():
     print(f"{'='*70}\n")
 
     # Caricamento del modello e dei relativi pesi
-    model, loaded_algo, model_path = load_model(args.algo, num_uavs, seed)
+    model, loaded_algo, model_path = load_model(
+        args.algo,
+        num_uavs,
+        seed=seed,
+        model_path=args.model_path,
+        models_dir=args.models_dir
+    )
 
     # Inizializzazione dell'ambiente con interfaccia grafica
     env = MultiUAVEnv(
@@ -130,9 +168,13 @@ def main():
     print(f"Avvio della simulazione per {args.episodes} episodi...")
     successes = 0
     total_rewards = []
+    user_interrupted = False
 
     # Ciclo di simulazione sugli episodi configurati
     for episode in range(args.episodes):
+        if user_interrupted:
+            break
+
         obs, info = env.reset()
         done = False
         truncated = False
@@ -143,6 +185,17 @@ def main():
 
         # Loop di avanzamento del singolo episodio fino a completamento o timeout
         while not done and not truncated:
+            # Controllo eventi Pygame (chiusura finestra)
+            import pygame
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    print("\n[!] Finestra Pygame chiusa dall'utente. Uscita...")
+                    user_interrupted = True
+                    break
+
+            if user_interrupted:
+                break
+
             # Predizione delle azioni dalla policy (in modalità deterministica per il test)
             action, _states = model.predict(obs, deterministic=True)
             
