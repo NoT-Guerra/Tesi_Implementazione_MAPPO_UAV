@@ -71,24 +71,17 @@ def train(num_uavs=1, total_timesteps=200000, algo="mappo", size=10, num_obstacl
             seed=seed
         )
 
-        print("Inizio dell'addestramento MAPPO...")
         # Ciclo di addestramento con logging periodico su TensorBoard
-        model.learn(env, total_timesteps=total_timesteps, verbose=1, log_interval=10, tensorboard_log=tb_log)
-        print("Addestramento MAPPO completato!")
+        model.learn(env, total_timesteps=total_timesteps, verbose=0, log_interval=10, tensorboard_log=tb_log)
 
         # Salvataggio dei pesi del modello e della configurazione (.pt)
         os.makedirs(save_dir, exist_ok=True)
         model_name = f"mappo_uav_{num_uavs}_{seed}"
         model_path = os.path.join(save_dir, model_name)
         model.save(model_path)
-        print(f"Modello salvato come '{model_path}.pt'")
 
         # Valutazione quantitativa delle prestazioni su 100 episodi di test
-        print("\nValutazione del modello su 100 episodi...")
         mean_reward, std_reward, success_rate, avg_steps = model.evaluate(env, n_eval_episodes=100)
-        print(f"Mean Reward:  {mean_reward:.2f} +/- {std_reward:.2f}")
-        print(f"Success Rate: {success_rate:.1f}%")
-        print(f"Passi Medi:   {avg_steps:.1f} step")
 
     else:
         # Fallback sull'algoritmo baseline PPO centralizzato (Stable-Baselines3)
@@ -96,22 +89,20 @@ def train(num_uavs=1, total_timesteps=200000, algo="mappo", size=10, num_obstacl
         from stable_baselines3.common.evaluation import evaluate_policy
 
         # Configurazione del modello PPO standard con policy MLP centralizzata
-        model = PPO("MlpPolicy", env, seed=seed, verbose=1, tensorboard_log=tb_log)
-        print("Inizio dell'addestramento PPO centralizzato...")
+        model = PPO("MlpPolicy", env, seed=seed, verbose=0, tensorboard_log=tb_log)
         # Avvio dell'addestramento di baseline
         model.learn(total_timesteps=total_timesteps, tb_log_name=f"PPO_{num_uavs}_UAV_{seed}")
-        print("Addestramento PPO completato!")
 
         # Salvataggio del modello PPO compresso (.zip)
         os.makedirs(save_dir, exist_ok=True)
         model_name = f"ppo_multi_uav_{num_uavs}_{seed}"
         model_path = os.path.join(save_dir, model_name)
         model.save(model_path)
-        print(f"Modello salvato come '{model_path}.zip'")
 
         # Valutazione empirica della policy PPO su 100 episodi
         mean_reward, std_reward = evaluate_policy(model, env, n_eval_episodes=100)
-        print(f"Mean reward su 100 episodi: {mean_reward:.2f} +/- {std_reward:.2f}")
+
+    print(f" ADDESTRAMENTO {algo.upper()} COMPLETATO")
 
     # Chiusura e rilascio delle risorse dell'ambiente
     env.close()

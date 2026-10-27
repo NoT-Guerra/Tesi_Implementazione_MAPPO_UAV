@@ -270,7 +270,6 @@ def generate_aggregated_plots(stats, seeds, output_png):
     os.makedirs(os.path.dirname(os.path.abspath(output_png)), exist_ok=True)
     plt.savefig(output_png, dpi=300, bbox_inches="tight")
     plt.close()
-    print(f"  Grafico aggregato multi-seed salvato in: {output_png}")
 
 
 def export_aggregated_csv(stats, output_csv):
@@ -328,8 +327,6 @@ def export_aggregated_csv(stats, output_csv):
             }
             writer.writerow(row)
 
-    print(f"  Tabella CSV aggregata salvata in: {output_csv}")
-
 
 def export_markdown_and_print_summary(stats, seeds, output_md=None):
     """
@@ -368,18 +365,12 @@ def export_markdown_and_print_summary(stats, seeds, output_md=None):
         lines.append(line)
 
     content = "\n".join(lines)
-    print("\n" + "=" * 90)
-    print(f" TABELLA AGGREGATA TESI: MEDIA \u00b1 DEVIAZIONE STANDARD (Semi: {seeds_str})")
-    print("=" * 90)
-    for line in lines[3:]:
-        print(line)
-    print("=" * 90 + "\n")
+
 
     if output_md:
         os.makedirs(os.path.dirname(os.path.abspath(output_md)), exist_ok=True)
         with open(output_md, "w", encoding="utf-8") as f:
             f.write(content + "\n")
-        print(f"  Tabella Markdown per la tesi salvata in: {output_md}")
 
 
 def main():
@@ -396,10 +387,6 @@ def main():
     if not seed_files:
         print("  Nessun file di benchmark trovato con i semi specificati. Interruzione.")
         return
-
-    print(f"  Trovati {len(seed_files)} file di benchmark:")
-    for s, p in sorted(seed_files.items()):
-        print(f"    - Seed {s}: {p}")
 
     grouped_data, seeds_used = load_and_group_benchmarks(seed_files)
     stats = compute_statistics(grouped_data)

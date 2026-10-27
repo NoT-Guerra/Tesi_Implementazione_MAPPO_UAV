@@ -113,16 +113,12 @@ def plot_4uav_comparison(stats, seeds, output_png):
     os.makedirs(os.path.dirname(os.path.abspath(output_png)), exist_ok=True)
     plt.savefig(output_png, dpi=300, bbox_inches="tight")
     plt.close()
-    print(f"  Grafico comparativo 4 UAV salvato in: {output_png}")
 
 
 def run_single_algorithm(algo, uavs, timesteps, seed, save_dir, models_dir, tb_log, eval_episodes=100):
     """
     Esegue l'addestramento completo di un singolo algoritmo a 4 UAV con monitoraggio risorse e salvataggio checkpoint.
     """
-    now_str = datetime.datetime.now().strftime("%H:%M:%S")
-    print(f"[{now_str}] AVVIO RUN: {algo.upper()} | {uavs} UAV | {timesteps:,} step | Seed {seed}")
-
     env = MultiUAVEnv(size=10, num_obstacles=4, num_uavs=uavs)
 
     # Monitoraggio risorse in background
@@ -152,10 +148,8 @@ def run_single_algorithm(algo, uavs, timesteps, seed, save_dir, models_dir, tb_l
         # Salvataggio pesi modello MAPPO (.pt)
         model_path = os.path.join(models_dir, f"mappo_uav_{uavs}_{seed}")
         model_mappo.save(model_path)
-        print(f"  Checkpoint MAPPO salvato: {model_path}.pt")
 
         # Valutazione finale
-        print(f"  Valutazione in corso su {eval_episodes} episodi di test...")
         mean_rew, std_rew, succ_rate, avg_steps = evaluate_agent(model_mappo, "mappo", env, n_eval_episodes=eval_episodes)
     else:
         model_ppo = PPO("MlpPolicy", env, seed=seed, verbose=0, tensorboard_log=tb_log)
@@ -167,21 +161,14 @@ def run_single_algorithm(algo, uavs, timesteps, seed, save_dir, models_dir, tb_l
         # Salvataggio pesi modello PPO (.zip)
         model_path = os.path.join(models_dir, f"ppo_multi_uav_{uavs}_{seed}")
         model_ppo.save(model_path)
-        print(f"  Checkpoint PPO salvato: {model_path}.zip")
 
         # Valutazione finale
-        print(f"  Valutazione in corso su {eval_episodes} episodi di test...")
         mean_rew, std_rew, succ_rate, avg_steps = evaluate_agent(model_ppo, "ppo", env, n_eval_episodes=eval_episodes)
 
     env.close()
 
     fps = timesteps / elapsed_time if elapsed_time > 0 else 0.0
     stats = monitor.get_summary()
-
-    elapsed_m = elapsed_time / 60.0
-    print(f"  Completato in {elapsed_time:.1f}s ({elapsed_m:.1f} min) | Throughput: {fps:.1f} FPS")
-    print(f"  Success Rate: {succ_rate:.1f}% | Reward: {mean_rew:.1f} +/- {std_rew:.1f} | Passi Medi: {avg_steps:.1f}")
-    print(f"  CPU Media: {stats['cpu_avg']:.1f}% | RAM: {stats['ram_avg']:.1f} MB | GPU: {stats['gpu_avg']:.1f}%")
 
     return {
         "Droni": uavs,
@@ -215,7 +202,6 @@ def save_seed_csv(results, seed_dir, seed):
                 f"{r['GPU_Picco_pct']:.2f},{r['VRAM_MB']:.2f},{r['Reward_Medio']:.2f},{r['Reward_Std']:.2f},"
                 f"{r['Success_Rate_pct']:.2f},{r['Avg_Steps']:.2f}\n"
             )
-    print(f"  File CSV del seed {seed} salvato in: {csv_file}")
 
 
 def main():
@@ -249,7 +235,6 @@ def main():
 
         for algo in algos:
             current_run += 1
-            print(f"\n>>> AVANZAMENTO SUITE NOTTURNA: [{current_run}/{total_runs}] (Seed {seed} - {algo.upper()}) <<<")
             res = run_single_algorithm(
                 algo=algo,
                 uavs=args.uavs,

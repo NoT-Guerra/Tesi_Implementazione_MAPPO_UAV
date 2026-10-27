@@ -520,8 +520,6 @@ class MAPPO:
         if tensorboard_log is not None and SummaryWriter is not None:
             tb_dir = os.path.join(tensorboard_log, f"MAPPO_{self.num_uavs}_UAV_{self.seed}")
             writer = SummaryWriter(log_dir=tb_dir)
-            if verbose:
-                print(f"TensorBoard attivo in: {tb_dir}")
 
         # Estrazione delle osservazioni locali e dello stato globale
         if hasattr(env, "get_all_agent_obs"):
@@ -542,7 +540,6 @@ class MAPPO:
         if verbose:
             drone_str = f"{self.num_uavs} dron{'e' if self.num_uavs == 1 else 'i'}"
             print(f"Inizio addestramento MAPPO per {drone_str} ({total_timesteps:,} step totali)")
-            print(f"Dimensione Input: Actor={self.obs_dim}, Critic={self.state_dim} | Device: {self.device}")
 
         # Ciclo principale di campionamento e interazione
         while total_steps < total_timesteps:
@@ -603,22 +600,12 @@ class MAPPO:
             losses = self.train_step()
             update_count += 1
 
-            # Logging periodico a terminale e su TensorBoard
+            # Logging periodico su TensorBoard
             if update_count % log_interval == 0 or total_steps >= total_timesteps:
                 elapsed = time.time() - start_time
                 fps = total_steps / elapsed if elapsed > 0 else 0
                 avg_rew = np.mean(ep_rewards[-100:]) if ep_rewards else 0.0
                 succ_rate = (np.mean(ep_successes[-100:]) * 100) if ep_successes else 0.0
-
-                if verbose:
-                    print(
-                        f"[Step {total_steps:>7}/{total_timesteps}] "
-                        f"FPS: {fps:>5.0f} | "
-                        f"Reward Medio: {avg_rew:>7.2f} | "
-                        f"Success Rate: {succ_rate:>5.1f}% | "
-                        f"Loss Actor: {losses['actor_loss']:>6.3f} | "
-                        f"Loss Critic: {losses['critic_loss']:>6.3f}"
-                    )
 
                 if writer is not None:
                     writer.add_scalar("rollout/ep_rew_mean", avg_rew, total_steps)

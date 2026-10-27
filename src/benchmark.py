@@ -173,9 +173,6 @@ def run_single_benchmark(algo, n_uavs, timesteps, size=SIZE, num_obstacles=NUM_O
     Returns:
         dict: Dizionario con metriche prestazionali, temporali e di utilizzo risorse.
     """
-    drone_lbl = f"{n_uavs} dron{'e' if n_uavs == 1 else 'i'}"
-    print(f"\n---> [{algo.upper()}] Test in corso su {drone_lbl} ({timesteps:,} step)...")
-
     # Inizializzazione dell'ambiente di simulazione
     env = MultiUAVEnv(size=size, num_obstacles=num_obstacles, num_uavs=n_uavs)
 
@@ -218,10 +215,6 @@ def run_single_benchmark(algo, n_uavs, timesteps, size=SIZE, num_obstacles=NUM_O
     # Valutazione delle prestazioni della policy addestrata su episodi di test
     mean_rew, std_rew, succ_rate, avg_steps = evaluate_agent(model, algo, env, n_eval_episodes=DEFAULT_EVAL_EPISODES)
     env.close()
-
-    print(f"     Completato in {elapsed_time:.2f}s ({fps:.1f} FPS)")
-    print(f"     Reward: {mean_rew:.2f} +/- {std_rew:.2f} | Success Rate: {succ_rate:.1f}% | Passi Medi: {avg_steps:.1f}")
-    print(f"     CPU: {stats['cpu_avg']:.1f}% (picco {stats['cpu_max']:.1f}%) | RAM: {stats['ram_avg']:.1f} MB | GPU: {stats['gpu_avg']:.1f}%")
 
     return {
         "algo": algo.upper(),
@@ -333,7 +326,6 @@ def generate_comparison_plots(results_mappo, results_ppo, output_image="benchmar
     # Salvataggio dell'immagine
     plt.savefig(output_image, dpi=300, bbox_inches="tight")
     plt.close()
-    print(f"\n[+] Grafico comparativo salvato in: {output_image}")
 
 
 def run_benchmark(drone_counts=None, timesteps_per_run=DEFAULT_TIMESTEPS, mode="both", seed=SEED, save_dir=DEFAULT_BENCHMARK_DIR):
@@ -388,15 +380,6 @@ def run_benchmark(drone_counts=None, timesteps_per_run=DEFAULT_TIMESTEPS, mode="
             res_ppo = run_single_benchmark("ppo", n_uavs, steps, seed=seed)
             results_ppo.append(res_ppo)
 
-    # Stampa della tabella a terminale
-    print(" TABELLA RISULTATI: MAPPO vs PPO CENTRALIZZATO")
-    header = (
-        f"{'Droni':<6} | {'Algoritmo':<18} | {'Step':<9} | {'Reward':<12} | {'Success%':<9} | "
-        f"{'FPS':<9} | {'Tempo (s)':<10} | {'CPU Avg%':<9} | {'RAM (MB)':<9} | {'GPU%':<6}"
-    )
-    print(header)
-    print("-" * 118)
-
     all_results = []
     for n in drone_counts:
         m_res = next((r for r in results_mappo if r["n_uavs"] == n), None)
@@ -404,33 +387,8 @@ def run_benchmark(drone_counts=None, timesteps_per_run=DEFAULT_TIMESTEPS, mode="
 
         if m_res:
             all_results.append(m_res)
-            print(
-                f"{m_res['n_uavs']:<6} | "
-                f"{m_res['algo']:<18} | "
-                f"{m_res.get('timesteps', 0):<9} | "
-                f"{m_res['mean_reward']:<12.2f} | "
-                f"{m_res['success_rate']:<9.1f} | "
-                f"{m_res['fps']:<9.1f} | "
-                f"{m_res['time_s']:<10.2f} | "
-                f"{m_res['cpu_avg']:<9.1f} | "
-                f"{m_res['ram_avg']:<9.1f} | "
-                f"{m_res['gpu_avg']:<6.1f}"
-            )
         if p_res:
             all_results.append(p_res)
-            print(
-                f"{p_res['n_uavs']:<6} | "
-                f"{p_res['algo']:<18} | "
-                f"{p_res.get('timesteps', 0):<9} | "
-                f"{p_res['mean_reward']:<12.2f} | "
-                f"{p_res['success_rate']:<9.1f} | "
-                f"{p_res['fps']:<9.1f} | "
-                f"{p_res['time_s']:<10.2f} | "
-                f"{p_res['cpu_avg']:<9.1f} | "
-                f"{p_res['ram_avg']:<9.1f} | "
-                f"{p_res['gpu_avg']:<6.1f}"
-            )
-        print("-" * 118)
 
     import shutil
     os.makedirs(save_dir, exist_ok=True)
@@ -448,7 +406,6 @@ def run_benchmark(drone_counts=None, timesteps_per_run=DEFAULT_TIMESTEPS, mode="
                 f"{r['gpu_max']:.2f},{r['vram_avg']:.2f},{r['mean_reward']:.2f},{r['std_reward']:.2f},"
                 f"{r['success_rate']:.2f},{r['avg_steps']:.2f}\n"
             )
-    print(f"\n[+] Tabella salvata con successo in CSV: {csv_file}")
     shutil.copyfile(csv_file, os.path.join(save_dir, "benchmark_confronto_mappo.csv"))
 
     png_file = os.path.join(save_dir, f"benchmark_confronto_mappo_{seed}.png")
@@ -489,7 +446,6 @@ def run_benchmark(drone_counts=None, timesteps_per_run=DEFAULT_TIMESTEPS, mode="
         plt.savefig(png_file, dpi=300, bbox_inches="tight")
         plt.close()
         shutil.copyfile(png_file, os.path.join(save_dir, "benchmark_confronto_mappo.png"))
-        print(f"Grafico MAPPO salvato in {png_file}")
 
     print(f"\nBenchmark completato\n")
 
