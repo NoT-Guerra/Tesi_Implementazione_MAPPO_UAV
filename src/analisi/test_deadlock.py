@@ -1,6 +1,8 @@
 """
-Script di test per analizzare i casi di deadlock e capire se i droni
-rimangono fermi nella stessa cella o continuano a muoversi senza progredire.
+Script di test per analizzare i casi di deadlock e verificare l'efficacia di:
+1) Regola di precedenza sui conflitti di vertice (distanza dall'hangar + ID minore)
+2) Action Masking sulle mosse invalide (bordi mappa, montagne e stazionamento volontario)
+3) Meccanismo Anti-Livelock / Loop-Breaking (mascheramento delle oscillazioni A <-> B)
 """
 
 import os
@@ -373,6 +375,147 @@ def is_border_gap_cell(pos, obstacles, size=10):
     return False
 
 
+def _get_action_logits(model, algo, obs, num_uavs):
+    """
+    Estrae i logit delle 5 azioni discrete per ciascun drone (forma: (num_uavs, 5))
+    sia per MAPPO sia per PPO (Stable-Baselines3).
+    """
+    import torch
+
+    if algo.lower() == "mappo":
+        obs_array = np.array(obs, dtype=np.float32)
+        if obs_array.ndim == 1:
+            if len(obs_array) == model.obs_dim and model.num_uavs == 1:
+                agent_obs = obs_array.reshape(1, model.obs_dim)
+            else:
+                agent_obs = model.extract_agent_observations(obs_array)
+        else:
+            agent_obs = obs_array
+        model.actor.eval()
+        with torch.no_grad():
+            obs_tensor = torch.tensor(agent_obs, dtype=torch.float32, device=model.device)
+            logits = model.actor.net(obs_tensor).cpu().numpy()
+        return logits
+    else:
+        with torch.no_grad():
+            obs_tensor, _ = model.policy.obs_to_tensor(obs)
+            dist = model.policy.get_distribution(obs_tensor)
+            if isinstance(dist.distribution, list):
+                logits = np.stack(
+                    [d.logits.squeeze(0).cpu().numpy() for d in dist.distribution],
+                    axis=0,
+                )
+            else:
+                logits = dist.distribution.logits.cpu().numpy().reshape(num_uavs, -1)
+        return logits
+
+
+def select_actions_with_mask_and_anti_livelock(
+    env,
+    model,
+    algo,
+    obs,
+    prev_locs,
+    visit_counts,
+    blocked_cells_prev,
+):
+    """
+    Seleziona le azioni applicando:
+    1) Action Masking sulle mosse invalide (bordi mappa, montagne, azione Fermo volontaria e celle bloccate al passo precedente).
+    2) Anti-Livelock / Loop-Breaking (mascheramento del ritorno immediato A <-> B e preferenza per celle meno visitate nei cicli).
+    """
+    num_uavs = env.num_uavs
+    logits = _get_action_logits(model, algo, obs, num_uavs)
+    target_pos = tuple(int(x) for x in env._target_location)
+    obstacle_set = {tuple(int(x) for x in ob) for ob in env._obstacles}
+
+    chosen_actions = np.zeros(num_uavs, dtype=int)
+    mask_events = []
+    anti_livelock_events = []
+
+    for i in range(num_uavs):
+        if env._arrived[i]:
+            chosen_actions[i] = 0
+            continue
+
+        curr_pos = tuple(int(x) for x in env._uav_locations[i])
+        raw_logits = logits[i].copy()
+        raw_best = int(np.argmax(raw_logits))
+
+        # 1. Action Masking: escludi Fermo (0), bordi mappa e ostacoli montuosi
+        masked_logits = raw_logits.copy()
+        masked_logits[0] = -np.inf
+
+        cand_by_act = {}
+        for a in (1, 2, 3, 4):
+            d = env._action_to_direction[a]
+            cand = (curr_pos[0] + int(d[0]), curr_pos[1] + int(d[1]))
+            cand_by_act[a] = cand
+            if cand[0] < 0 or cand[0] >= env.size or cand[1] < 0 or cand[1] >= env.size:
+                masked_logits[a] = -np.inf
+            elif cand in obstacle_set:
+                masked_logits[a] = -np.inf
+
+        valid_acts = [a for a in (1, 2, 3, 4) if np.isfinite(masked_logits[a])]
+        if not valid_acts:
+            chosen_actions[i] = 0
+            continue
+
+        # Se al passo precedente il drone era rimasto bloccato contro un altro drone fermo/in swap,
+        # maschera temporaneamente quella cella se esistono altre direzioni valide
+        if blocked_cells_prev[i] and len(valid_acts) > 1:
+            alt_acts = [a for a in valid_acts if cand_by_act[a] not in blocked_cells_prev[i]]
+            if alt_acts:
+                for a in valid_acts:
+                    if a not in alt_acts:
+                        masked_logits[a] = -np.inf
+                valid_acts = alt_acts
+
+        best_after_mask = int(max(valid_acts, key=lambda a: masked_logits[a]))
+        if best_after_mask != raw_best:
+            mask_events.append((i, curr_pos, raw_best, best_after_mask))
+
+        # 2. Anti-Livelock / Loop-Breaking
+        chosen_act = best_after_mask
+        cand_best = cand_by_act[best_after_mask]
+
+        # Se una mossa valida entra direttamente nell'hangar, eseguila subito
+        hangar_acts = [a for a in valid_acts if cand_by_act[a] == target_pos]
+        if hangar_acts:
+            chosen_act = hangar_acts[0]
+            if chosen_act != best_after_mask:
+                anti_livelock_events.append((i, curr_pos, best_after_mask, chosen_act, prev_locs[i]))
+        elif len(valid_acts) > 1:
+            # 2a. Evita oscillazione di periodo 2 (ritorno immediato alla cella t-1)
+            non_back_acts = [
+                a for a in valid_acts
+                if prev_locs[i] is None or cand_by_act[a] != prev_locs[i]
+            ]
+            if prev_locs[i] is not None and cand_best == prev_locs[i] and non_back_acts:
+                min_v = min(visit_counts[i].get(cand_by_act[a], 0) for a in non_back_acts)
+                best_non_back = [
+                    a for a in non_back_acts
+                    if visit_counts[i].get(cand_by_act[a], 0) == min_v
+                ]
+                chosen_act = int(max(best_non_back, key=lambda a: masked_logits[a]))
+                anti_livelock_events.append((i, curr_pos, best_after_mask, chosen_act, prev_locs[i]))
+            # 2b. Se il drone sta gia ripassando su celle visitate (ciclo > 2 passi), preferisci celle meno visitate
+            elif visit_counts[i].get(curr_pos, 0) >= 2 and visit_counts[i].get(cand_best, 0) >= 1:
+                pool = non_back_acts if non_back_acts else valid_acts
+                min_v = min(visit_counts[i].get(cand_by_act[a], 0) for a in pool)
+                if min_v < visit_counts[i].get(cand_best, 0):
+                    least_visited = [
+                        a for a in pool
+                        if visit_counts[i].get(cand_by_act[a], 0) == min_v
+                    ]
+                    chosen_act = int(max(least_visited, key=lambda a: masked_logits[a]))
+                    anti_livelock_events.append((i, curr_pos, best_after_mask, chosen_act, cand_best))
+
+        chosen_actions[i] = chosen_act
+
+    return chosen_actions, mask_events, anti_livelock_events
+
+
 def run_and_analyze_episode(env, model, algo, deterministic=True, render_delay=0.0):
     obs, info = env.reset()
     target = np.copy(env._target_location)
@@ -383,6 +526,13 @@ def run_and_analyze_episode(env, model, algo, deterministic=True, render_delay=0
     step_events = []
     total_reward = 0.0
     done = False
+
+    prev_locs = [None] * num_uavs
+    visit_counts = [
+        {tuple(int(x) for x in env._uav_locations[i]): 1}
+        for i in range(num_uavs)
+    ]
+    blocked_cells_prev = [set() for _ in range(num_uavs)]
 
     while not done:
         if env.render_mode == "human":
@@ -400,13 +550,21 @@ def run_and_analyze_episode(env, model, algo, deterministic=True, render_delay=0
         )
         history_positions.append(state_tuple)
 
-        action, _ = model.predict(obs, deterministic=deterministic)
-        if algo.lower() == "mappo":
-            env_action = action if num_uavs > 1 else (action[0] if hasattr(action, "__len__") else action)
+        if env.use_precedence:
+            actions, mask_events, anti_livelock_events = select_actions_with_mask_and_anti_livelock(
+                env, model, algo, obs, prev_locs, visit_counts, blocked_cells_prev
+            )
+            env_action = actions if num_uavs > 1 else int(actions[0])
         else:
-            env_action = action
+            action, _ = model.predict(obs, deterministic=deterministic)
+            if algo.lower() == "mappo":
+                env_action = action if num_uavs > 1 else (action[0] if hasattr(action, "__len__") else action)
+            else:
+                env_action = action
+            actions = np.array(env_action, dtype=int).flatten()
+            mask_events = []
+            anti_livelock_events = []
 
-        actions = np.array(env_action, dtype=int).flatten()
         step_num = env.step_count + 1
 
         obs, reward, terminated, truncated, info = env.step(env_action)
@@ -414,6 +572,29 @@ def run_and_analyze_episode(env, model, algo, deterministic=True, render_delay=0
 
         details = info.get("step_details", {})
         new_locs = [np.copy(loc) for loc in env._uav_locations]
+
+        # Aggiornamento memoria posizioni precedenti e contatori visite per Anti-Livelock
+        new_blocked = [set() for _ in range(num_uavs)]
+        for u1, u2, c_cell, p1, p2 in details.get("vertex_collisions", []):
+            if p1 != c_cell:
+                new_blocked[u1].add(c_cell)
+            if p2 != c_cell:
+                new_blocked[u2].add(c_cell)
+        for u1, u2, p1, p2 in details.get("edge_collisions", []):
+            d1 = int(np.linalg.norm(curr_locs[u1] - target, ord=1))
+            d2 = int(np.linalg.norm(curr_locs[u2] - target, ord=1))
+            loser = u2 if (d1, u1) <= (d2, u2) else u1
+            other_pos = p1 if loser == u2 else p2
+            new_blocked[loser].add(other_pos)
+        blocked_cells_prev = new_blocked
+
+        for i in range(num_uavs):
+            if not curr_arrived[i]:
+                c_pos = tuple(int(x) for x in curr_locs[i])
+                n_pos = tuple(int(x) for x in new_locs[i])
+                if n_pos != c_pos:
+                    prev_locs[i] = c_pos
+                    visit_counts[i][n_pos] = visit_counts[i].get(n_pos, 0) + 1
 
         ev = {
             "step": step_num,
@@ -425,6 +606,8 @@ def run_and_analyze_episode(env, model, algo, deterministic=True, render_delay=0
             "vertex_collisions": details.get("vertex_collisions", []),
             "edge_collisions": details.get("edge_collisions", []),
             "precedence_events": details.get("precedence_events", []),
+            "mask_events": mask_events,
+            "anti_livelock_events": anti_livelock_events,
             "hangar_side_contentions": details.get("hangar_side_contentions", []),
             "border_gap_events": details.get("border_gap_events", []),
             "stay_actions": details.get("stay_actions", []),
@@ -469,6 +652,8 @@ def run_and_analyze_episode(env, model, algo, deterministic=True, render_delay=0
 
     total_precedence_events = sum(len(x["precedence_events"]) for x in step_events)
     total_vertex_collisions = sum(len(x["vertex_collisions"]) for x in step_events)
+    total_mask_events = sum(len(x.get("mask_events", [])) for x in step_events)
+    total_anti_livelock_events = sum(len(x.get("anti_livelock_events", [])) for x in step_events)
 
     return {
         "success": success,
@@ -483,6 +668,8 @@ def run_and_analyze_episode(env, model, algo, deterministic=True, render_delay=0
         "step_events": step_events,
         "total_precedence_events": total_precedence_events,
         "total_vertex_collisions": total_vertex_collisions,
+        "total_mask_events": total_mask_events,
+        "total_anti_livelock_events": total_anti_livelock_events,
     }
 
 
@@ -519,6 +706,14 @@ def print_scenario_report(scenario_key, scenario_cfg, algo, seed, res, prec_labe
             for i in range(len(ev["actions"]))
         )
         events_list = []
+        for i, c_pos, raw_a, new_a in ev.get("mask_events", []):
+            events_list.append(
+                f"mask D{i}{c_pos}: {ACTION_NAMES[raw_a]}->{ACTION_NAMES[new_a]}"
+            )
+        for i, c_pos, old_a, new_a, _ in ev.get("anti_livelock_events", []):
+            events_list.append(
+                f"anti-loop D{i}{c_pos}: {ACTION_NAMES[old_a]}->{ACTION_NAMES[new_a]}"
+            )
         for w, l, c_cell, pw, pl, dw, dl in ev.get("precedence_events", []):
             events_list.append(
                 f"precedenza su {c_cell}: passa D{w}{pw} (dist={dw}), attende D{l}{pl} (dist={dl})"
@@ -563,7 +758,8 @@ def print_scenario_report(scenario_key, scenario_cfg, algo, seed, res, prec_labe
     if res["success"]:
         msg = (
             f"Esito: completato in {res['steps']} step "
-            f"(reward: {res['total_reward']:.1f}, precedenze attivate: {res['total_precedence_events']})"
+            f"(reward: {res['total_reward']:.1f}, precedenze: {res['total_precedence_events']}, "
+            f"action-mask: {res['total_mask_events']}, anti-loop: {res['total_anti_livelock_events']})"
         )
         print(msg)
         if md_lines is not None:
@@ -572,7 +768,8 @@ def print_scenario_report(scenario_key, scenario_cfg, algo, seed, res, prec_labe
         msg = (
             f"Esito: fallimento per timeout a {res['steps']} step "
             f"(reward: {res['total_reward']:.1f}, droni arrivati: {res['arrived_count']}/{len(res['arrived_mask'])}, "
-            f"precedenze attivate: {res['total_precedence_events']})"
+            f"precedenze: {res['total_precedence_events']}, action-mask: {res['total_mask_events']}, "
+            f"anti-loop: {res['total_anti_livelock_events']})"
         )
         print(msg)
         if res["regime"] == "STATIC_DEADLOCK":
@@ -612,6 +809,8 @@ def _compute_survey_metrics(all_episodes):
     total_vertex_collisions = sum(e["total_vertex_collisions"] for e in all_episodes)
     total_precedence_events = sum(e["total_precedence_events"] for e in all_episodes)
     episodes_with_precedence = sum(1 for e in all_episodes if e["total_precedence_events"] > 0)
+    total_mask_events = sum(e["total_mask_events"] for e in all_episodes)
+    total_anti_livelock_events = sum(e["total_anti_livelock_events"] for e in all_episodes)
 
     for e in failed_ep:
         for _, k_info in e["drone_kinematics"].items():
@@ -654,6 +853,8 @@ def _compute_survey_metrics(all_episodes):
         "total_vertex_collisions": total_vertex_collisions,
         "total_precedence_events": total_precedence_events,
         "episodes_with_precedence": episodes_with_precedence,
+        "total_mask_events": total_mask_events,
+        "total_anti_livelock_events": total_anti_livelock_events,
     }
 
 
@@ -702,7 +903,11 @@ def run_statistical_survey(
             metrics_by_mode[use_prec] = m
             episodes_by_mode[use_prec] = all_episodes
 
-            prec_title = "CON PRECEDENZA (distanza hangar)" if use_prec else "SENZA PRECEDENZA (standard)"
+            prec_title = (
+                "CON PRECEDENZA + ACTION MASKING + ANTI-LIVELOCK"
+                if use_prec
+                else "SENZA PRECEDENZA (standard)"
+            )
             total_ep = m["total_ep"]
             n_succ = m["n_succ"]
             n_fail = m["n_fail"]
@@ -717,7 +922,21 @@ def run_statistical_survey(
             print(f"\nRisultati {algo.upper()} - {prec_title} ({total_ep} episodi totali sui semi {seeds}):")
             print(f"Episodi completati: {n_succ}/{total_ep} ({n_succ / total_ep * 100:.1f}%)")
             print(f"Episodi falliti:    {n_fail}/{total_ep} ({n_fail / total_ep * 100:.1f}%)")
-            print(f"Scontri di vertice totali: {m['total_vertex_collisions']} | Precedenze attivate: {m['total_precedence_events']} (in {m['episodes_with_precedence']}/{total_ep} episodi)")
+            print(
+                f"Scontri di vertice totali: {m['total_vertex_collisions']} | "
+                f"Precedenze: {m['total_precedence_events']} (in {m['episodes_with_precedence']}/{total_ep} ep.) | "
+                f"Action-Mask: {m['total_mask_events']} | Anti-Livelock: {m['total_anti_livelock_events']}"
+            )
+
+            if md_lines is not None:
+                md_lines.append(f"### Risultati {algo.upper()} - {prec_title} ({total_ep} episodi sui semi `{seeds}`)")
+                md_lines.append(f"- Episodi completati: {n_succ}/{total_ep} ({n_succ / total_ep * 100:.1f}%)")
+                md_lines.append(f"- Episodi falliti: {n_fail}/{total_ep} ({n_fail / total_ep * 100:.1f}%)")
+                md_lines.append(
+                    f"- Scontri di vertice totali: {m['total_vertex_collisions']} | "
+                    f"Precedenze attivate: {m['total_precedence_events']} (in {m['episodes_with_precedence']}/{total_ep} ep.) | "
+                    f"Action-Masking: {m['total_mask_events']} | Anti-Livelock: {m['total_anti_livelock_events']}"
+                )
 
             if n_fail > 0:
                 print(f"\nComportamento dei droni non arrivati ({total_stuck_drones} totali, media {total_stuck_drones / n_fail:.2f} per episodio fallito):")
@@ -737,10 +956,6 @@ def run_statistical_survey(
                 )
 
                 if md_lines is not None:
-                    md_lines.append(f"### Risultati {algo.upper()} - {prec_title} ({total_ep} episodi sui semi `{seeds}`)")
-                    md_lines.append(f"- Episodi completati: {n_succ}/{total_ep} ({n_succ / total_ep * 100:.1f}%)")
-                    md_lines.append(f"- Episodi falliti: {n_fail}/{total_ep} ({n_fail / total_ep * 100:.1f}%)")
-                    md_lines.append(f"- Scontri di vertice totali: {m['total_vertex_collisions']} | Precedenze attivate: {m['total_precedence_events']} (in {m['episodes_with_precedence']}/{total_ep} episodi)")
                     md_lines.append(f"- Droni non arrivati ({total_stuck_drones} totali, media {total_stuck_drones / n_fail:.2f} per episodio fallito):")
                     md_lines.append(f"  - Rimasti bloccati nella stessa cella: {immobile_drones}/{total_stuck_drones} ({immobile_drones / total_stuck_drones * 100:.1f}%)")
                     md_lines.append(f"  - In movimento continuo senza progredire: {oscillating_drones}/{total_stuck_drones} ({oscillating_drones / total_stuck_drones * 100:.1f}%)\n")
@@ -756,22 +971,26 @@ def run_statistical_survey(
                         f"{cause_border_gap_any}/{n_fail} ({cause_border_gap_any / n_fail * 100:.1f}%) | "
                         f"{cause_border_gap_persistent}/{n_fail} ({cause_border_gap_persistent / n_fail * 100:.1f}%) |\n"
                     )
+            elif md_lines is not None:
+                md_lines.append("- Nessun episodio fallito (100% di successo).\n")
 
-                csv_rows.append({
-                    "Algoritmo": algo.upper(),
-                    "Regola_Precedenza": "ON" if use_prec else "OFF",
-                    "Episodi_Totali": total_ep,
-                    "Fallimenti": n_fail,
-                    "Failure_Rate_pct": f"{n_fail / total_ep * 100:.1f}",
-                    "Scontri_Vertice_Totali": m["total_vertex_collisions"],
-                    "Precedenze_Attivate": m["total_precedence_events"],
-                    "Droni_Immobili_pct": f"{immobile_drones / total_stuck_drones * 100:.1f}",
-                    "Droni_Oscillanti_pct": f"{oscillating_drones / total_stuck_drones * 100:.1f}",
-                    "Contesa_Lati_Hangar_Any_pct": f"{cause_hangar_side_any / n_fail * 100:.1f}",
-                    "Contesa_Lati_Hangar_Persist_pct": f"{cause_hangar_side_persistent / n_fail * 100:.1f}",
-                    "Varco_1Cella_Bordo_Any_pct": f"{cause_border_gap_any / n_fail * 100:.1f}",
-                    "Varco_1Cella_Bordo_Persist_pct": f"{cause_border_gap_persistent / n_fail * 100:.1f}",
-                })
+            csv_rows.append({
+                "Algoritmo": algo.upper(),
+                "Regola_Precedenza": "ON" if use_prec else "OFF",
+                "Episodi_Totali": total_ep,
+                "Fallimenti": n_fail,
+                "Failure_Rate_pct": f"{n_fail / total_ep * 100:.1f}",
+                "Scontri_Vertice_Totali": m["total_vertex_collisions"],
+                "Precedenze_Attivate": m["total_precedence_events"],
+                "Action_Mask_Attivati": m["total_mask_events"],
+                "Anti_Livelock_Attivati": m["total_anti_livelock_events"],
+                "Droni_Immobili_pct": f"{immobile_drones / total_stuck_drones * 100:.1f}" if total_stuck_drones > 0 else "0.0",
+                "Droni_Oscillanti_pct": f"{oscillating_drones / total_stuck_drones * 100:.1f}" if total_stuck_drones > 0 else "0.0",
+                "Contesa_Lati_Hangar_Any_pct": f"{cause_hangar_side_any / n_fail * 100:.1f}" if n_fail > 0 else "0.0",
+                "Contesa_Lati_Hangar_Persist_pct": f"{cause_hangar_side_persistent / n_fail * 100:.1f}" if n_fail > 0 else "0.0",
+                "Varco_1Cella_Bordo_Any_pct": f"{cause_border_gap_any / n_fail * 100:.1f}" if n_fail > 0 else "0.0",
+                "Varco_1Cella_Bordo_Persist_pct": f"{cause_border_gap_persistent / n_fail * 100:.1f}" if n_fail > 0 else "0.0",
+            })
 
         all_algo_metrics[algo.lower()] = metrics_by_mode
 
@@ -781,7 +1000,7 @@ def run_statistical_survey(
             ep_off = episodes_by_mode[False]
             ep_on = episodes_by_mode[True]
             resolved_eps = [
-                (e0["seed"], e0["ep"], e1["steps"], e1["total_precedence_events"])
+                (e0["seed"], e0["ep"], e1["steps"], e1["total_precedence_events"], e1["total_mask_events"], e1["total_anti_livelock_events"])
                 for e0, e1 in zip(ep_off, ep_on)
                 if not e0["success"] and e1["success"]
             ]
@@ -790,16 +1009,17 @@ def run_statistical_survey(
                 for e0, e1 in zip(ep_off, ep_on)
                 if e0["success"] and not e1["success"]
             ]
-            print(f"\n--- Confronto diretto {algo.upper()} (Senza vs Con Precedenza) ---")
+            print(f"\n--- Confronto diretto {algo.upper()} (Standard vs Precedenza + Masking + Anti-Livelock) ---")
             print(f"  Success Rate: {m_off['n_succ']}/{m_off['total_ep']} ({m_off['n_succ']/m_off['total_ep']*100:.1f}%) -> {m_on['n_succ']}/{m_on['total_ep']} ({m_on['n_succ']/m_on['total_ep']*100:.1f}%)")
-            print(f"  Scontri di vertice totali: {m_off['total_vertex_collisions']} -> {m_on['total_vertex_collisions']} (precedenze attivate: {m_on['total_precedence_events']})")
-            print(f"  Episodi falliti risolti grazie alla precedenza: {len(resolved_eps)} | Regressioni: {len(regressed_eps)}")
-            if resolved_eps:
-                print(f"  Dettaglio episodi sbloccati (seed, ep, step, precedenze): {resolved_eps}")
+            print(
+                f"  Scontri di vertice totali: {m_off['total_vertex_collisions']} -> {m_on['total_vertex_collisions']} "
+                f"(precedenze: {m_on['total_precedence_events']}, mask: {m_on['total_mask_events']}, anti-loop: {m_on['total_anti_livelock_events']})"
+            )
+            print(f"  Episodi falliti risolti: {len(resolved_eps)} | Regressioni: {len(regressed_eps)}")
 
             if md_lines is not None:
-                md_lines.append(f"#### Confronto diretto {algo.upper()} (Senza vs Con Precedenza)\n")
-                md_lines.append("| Metrica | Senza Precedenza | Con Precedenza | Differenza |")
+                md_lines.append(f"#### Confronto diretto {algo.upper()} (Standard vs Precedenza + Masking + Anti-Livelock)\n")
+                md_lines.append("| Metrica | Senza Precedenza (Standard) | Con Precedenza + Masking + Anti-Livelock | Differenza |")
                 md_lines.append("|:---|:---:|:---:|:---:|")
                 md_lines.append(
                     f"| Episodi completati | {m_off['n_succ']}/{m_off['total_ep']} ({m_off['n_succ']/m_off['total_ep']*100:.1f}%) | "
@@ -815,13 +1035,21 @@ def run_statistical_survey(
                     f"+{m_on['total_precedence_events']} |"
                 )
                 md_lines.append(
-                    f"| Contesa lati hangar (persistente) | {m_off['cause_hangar_side_persistent']} | {m_on['cause_hangar_side_persistent']} | "
-                    f"{m_on['cause_hangar_side_persistent'] - m_off['cause_hangar_side_persistent']:+d} |\n"
+                    f"| Interventi Action Masking | 0 | {m_on['total_mask_events']} | +{m_on['total_mask_events']} |"
                 )
-                if resolved_eps:
-                    md_lines.append(f"- Episodi falliti sbloccati dalla precedenza ({len(resolved_eps)}): `{resolved_eps}`\n")
+                md_lines.append(
+                    f"| Interventi Anti-Livelock | 0 | {m_on['total_anti_livelock_events']} | +{m_on['total_anti_livelock_events']} |"
+                )
+                md_lines.append(
+                    f"| Contesa lati hangar (persistente) | {m_off['cause_hangar_side_persistent']} | {m_on['cause_hangar_side_persistent']} | "
+                    f"{m_on['cause_hangar_side_persistent'] - m_off['cause_hangar_side_persistent']:+d} |"
+                )
+                md_lines.append(
+                    f"| Varco 1 cella sul bordo (persistente) | {m_off['cause_border_gap_persistent']} | {m_on['cause_border_gap_persistent']} | "
+                    f"{m_on['cause_border_gap_persistent'] - m_off['cause_border_gap_persistent']:+d} |\n"
+                )
 
-    # Tabella riepilogativa unificata MAPPO vs PPO (Senza vs Con Precedenza)
+    # Tabella riepilogativa unificata MAPPO vs PPO (Senza vs Con Precedenza + Masking + Anti-Livelock)
     if (
         "mappo" in all_algo_metrics
         and "ppo" in all_algo_metrics
@@ -858,27 +1086,22 @@ def run_statistical_survey(
             pct = (val / nf * 100.0) if nf > 0 else 0.0
             return f"{val} / {nf} ({pct:.1f}%)"
 
-        def _fmt_hangar_delta(m0, m1):
-            v0 = m0["cause_hangar_side_persistent"]
-            v1 = m1["cause_hangar_side_persistent"]
+        def _fmt_cause_delta(m0, m1, key):
+            v0 = m0[key]
+            v1 = m1[key]
+            if v0 == 0 and v1 == 0:
+                return "0"
             if v0 == 0:
-                return "Invariato"
+                return f"{v1:+d}"
+            diff = v1 - v0
             pct = (v1 - v0) / v0 * 100.0
-            return f"**{pct:+.1f}%**"
-
-        def _fmt_border_delta(m0, m1):
-            v0 = m0["cause_border_gap_persistent"]
-            v1 = m1["cause_border_gap_persistent"]
-            if abs(v1 - v0) <= 2:
-                return "Invariato"
-            pct = (v1 - v0) / v0 * 100.0 if v0 > 0 else 0.0
-            return f"{pct:+.1f}%"
+            return f"**{diff:+d} ({pct:+.1f}%)**"
 
         table_title = f"### Risultati su {tot_m} episodi per algoritmo (semi `{seeds_str}`)"
         table_rows = [
             table_title,
             "",
-            "| Metrica | MAPPO (Senza Precedenza) | MAPPO (Con Precedenza) | $\\Delta$ MAPPO | PPO (Senza Precedenza) | PPO (Con Precedenza) | $\\Delta$ PPO |",
+            "| Metrica | MAPPO (Standard) | MAPPO (Precedenza + Mask + Anti-Loop) | $\\Delta$ MAPPO | PPO (Standard) | PPO (Precedenza + Mask + Anti-Loop) | $\\Delta$ PPO |",
             "| :--- | :---: | :---: | :---: | :---: | :---: | :---: |",
             (
                 f"| **Episodi completati** | {mm0['n_succ']} / {tot_m} ({mm0['n_succ']/tot_m*100:.1f}%) | "
@@ -898,16 +1121,26 @@ def run_statistical_survey(
                 f"+{mp1['total_precedence_events']} |"
             ),
             (
+                f"| **Interventi Action Masking** | 0 | **{_fmt_int_dot(mm1['total_mask_events'])}** | "
+                f"+{_fmt_int_dot(mm1['total_mask_events'])} | 0 | **{_fmt_int_dot(mp1['total_mask_events'])}** | "
+                f"+{_fmt_int_dot(mp1['total_mask_events'])} |"
+            ),
+            (
+                f"| **Interventi Anti-Livelock** | 0 | **{_fmt_int_dot(mm1['total_anti_livelock_events'])}** | "
+                f"+{_fmt_int_dot(mm1['total_anti_livelock_events'])} | 0 | **{_fmt_int_dot(mp1['total_anti_livelock_events'])}** | "
+                f"+{_fmt_int_dot(mp1['total_anti_livelock_events'])} |"
+            ),
+            (
                 f"| **Contesa lati hangar (persistente)** | {_fmt_cause_cell(mm0, 'cause_hangar_side_persistent')} | "
-                f"**{_fmt_cause_cell(mm1, 'cause_hangar_side_persistent')}** | {_fmt_hangar_delta(mm0, mm1)} | "
+                f"**{_fmt_cause_cell(mm1, 'cause_hangar_side_persistent')}** | {_fmt_cause_delta(mm0, mm1, 'cause_hangar_side_persistent')} | "
                 f"{_fmt_cause_cell(mp0, 'cause_hangar_side_persistent')} | "
-                f"**{_fmt_cause_cell(mp1, 'cause_hangar_side_persistent')}** | {_fmt_hangar_delta(mp0, mp1)} |"
+                f"**{_fmt_cause_cell(mp1, 'cause_hangar_side_persistent')}** | {_fmt_cause_delta(mp0, mp1, 'cause_hangar_side_persistent')} |"
             ),
             (
                 f"| **Varco 1 cella sul bordo (persistente)** | {_fmt_cause_cell(mm0, 'cause_border_gap_persistent')} | "
-                f"**{_fmt_cause_cell(mm1, 'cause_border_gap_persistent')}** | {_fmt_border_delta(mm0, mm1)} | "
+                f"**{_fmt_cause_cell(mm1, 'cause_border_gap_persistent')}** | {_fmt_cause_delta(mm0, mm1, 'cause_border_gap_persistent')} | "
                 f"{_fmt_cause_cell(mp0, 'cause_border_gap_persistent')} | "
-                f"**{_fmt_cause_cell(mp1, 'cause_border_gap_persistent')}** | {_fmt_border_delta(mp0, mp1)} |"
+                f"**{_fmt_cause_cell(mp1, 'cause_border_gap_persistent')}** | {_fmt_cause_delta(mp0, mp1, 'cause_border_gap_persistent')} |"
             ),
             "",
         ]
@@ -1019,7 +1252,7 @@ def parse_args():
         type=str,
         default="compare",
         choices=["compare", "on", "off"],
-        help="Regola di precedenza sui conflitti: 'compare' (confronto Prima/Dopo), 'on' (attiva), 'off' (disattiva)",
+        help="Modalita di risoluzione conflitti/blocchi: 'compare' (confronto Prima/Dopo), 'on' (attiva), 'off' (disattiva)",
     )
     parser.add_argument(
         "--save-md",
@@ -1050,16 +1283,18 @@ def main():
         prec_modes = (False,)
 
     md_lines = [
-        f"# Risultati test deadlock e regola di precedenza ({args.uavs} droni)\n",
-        "Regola di precedenza testata (senza riaddestramento): in caso di contesa della stessa cella libera, "
-        "passa il drone con **minore distanza Manhattan dall'hangar** (a parità di distanza, indice minore `D0 > D1 > D2 > D3`).\n",
+        f"# Risultati test deadlock: Regola di Precedenza + Action Masking + Anti-Livelock ({args.uavs} droni)\n",
+        "Meccanismi testati in esecuzione (senza riaddestramento):\n"
+        "1. **Regola di precedenza**: su cella libera contesa passa il drone che si avvicina all'hangar (a parità, indice minore `D0 > D1 > D2 > D3`).\n"
+        "2. **Action Masking sulle mosse invalide**: mascheramento ($-\\infty$) delle direzioni che portano fuori griglia, dentro una montagna o a restare fermi volontariamente.\n"
+        "3. **Anti-Livelock / Loop-Breaking**: mascheramento del ritorno immediato alla cella del passo $t-1$ ($A \\leftrightarrow B$) e preferenza per le celle meno visitate in caso di cicli.\n",
         f"## Scenari con posizionamento specifico (seed modello: {args.seed})\n",
     ]
 
     render_mode = "human" if args.render else None
     env = DeadlockTestEnv(render_mode=render_mode, size=10, num_obstacles=4, num_uavs=args.uavs)
 
-    print(f"\nTest scenari di deadlock ({args.uavs} droni, seed modello: {args.seed}, precedenza: {args.precedence})")
+    print(f"\nTest scenari di deadlock ({args.uavs} droni, seed modello: {args.seed}, modalita: {args.precedence})")
 
     scenario_summary_rows = []
 
@@ -1072,7 +1307,7 @@ def main():
             sc_cfg = dict(DEADLOCK_SCENARIOS[sc_key])
             res_by_prec = {}
             for use_prec in prec_modes:
-                prec_label = "CON PRECEDENZA" if use_prec else "SENZA PRECEDENZA"
+                prec_label = "CON PRECEDENZA + MASK + ANTI-LOOP" if use_prec else "SENZA PRECEDENZA (STANDARD)"
                 sc_cfg[" current_algo"] = f"{algo.upper()} ({prec_label})"
                 env.set_precedence(use_prec)
                 env.set_custom_scenario(sc_cfg)
@@ -1101,23 +1336,26 @@ def main():
                     "off_vcol": r0["total_vertex_collisions"],
                     "on_vcol": r1["total_vertex_collisions"],
                     "on_prec": r1["total_precedence_events"],
+                    "on_mask": r1["total_mask_events"],
+                    "on_loop": r1["total_anti_livelock_events"],
                 })
 
     if scenario_summary_rows:
-        print("\n=== Riepilogo Scenari Fissi: Senza vs Con Regola di Precedenza ===")
+        print("\n=== Riepilogo Scenari Fissi: Standard vs Precedenza + Action Masking + Anti-Livelock ===")
         for row in scenario_summary_rows:
             print(
                 f"  [{row['algo']}] {row['title']}:\n"
-                f"      Senza Precedenza: {row['off_outcome']} (scontri vertice: {row['off_vcol']}) -> "
-                f"Con Precedenza: {row['on_outcome']} (scontri vertice: {row['on_vcol']}, precedenze: {row['on_prec']})"
+                f"      Standard: {row['off_outcome']} (scontri vertice: {row['off_vcol']}) -> "
+                f"Con Precedenza+Mask+AntiLoop: {row['on_outcome']} "
+                f"(scontri: {row['on_vcol']}, prec: {row['on_prec']}, mask: {row['on_mask']}, anti-loop: {row['on_loop']})"
             )
-        md_lines.append("### Riepilogo confronto scenari fissi (Senza vs Con Precedenza)\n")
-        md_lines.append("| Algoritmo | Scenario | Senza Precedenza | Con Precedenza | Scontri Vertice (Prima -> Dopo) | Precedenze Attivate |")
-        md_lines.append("|:---:|:---|:---:|:---:|:---:|:---:|")
+        md_lines.append("### Riepilogo confronto scenari fissi (Standard vs Precedenza + Masking + Anti-Livelock)\n")
+        md_lines.append("| Algoritmo | Scenario | Standard | Con Precedenza + Mask + Anti-Loop | Scontri Vertice (Prima -> Dopo) | Precedenze | Action Mask | Anti-Loop |")
+        md_lines.append("|:---:|:---|:---:|:---:|:---:|:---:|:---:|:---:|")
         for row in scenario_summary_rows:
             md_lines.append(
                 f"| {row['algo']} | {row['title']} | {row['off_outcome']} | **{row['on_outcome']}** | "
-                f"{row['off_vcol']} -> {row['on_vcol']} | {row['on_prec']} |"
+                f"{row['off_vcol']} -> {row['on_vcol']} | {row['on_prec']} | {row['on_mask']} | {row['on_loop']} |"
             )
         md_lines.append("")
 
