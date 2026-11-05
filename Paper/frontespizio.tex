@@ -1,0 +1,51 @@
+% frontespizio.tex - Frontespizio della Tesi di Laurea
+\begin{titlepage}
+    \thispagestyle{empty}
+    \pagenumbering{gobble}
+    \centering
+    
+    \IfFileExists{logo_unibo.png}{%
+        \includegraphics[width=4cm]{logo_unibo.png}\\[0.5cm]%
+    }{%
+        \IfFileExists{immagini/logo_unibo.png}{%
+            \includegraphics[width=4cm]{immagini/logo_unibo.png}\\[0.5cm]%
+        }{%
+            \vspace*{2cm}%
+        }%
+    }
+    
+    {\scshape\Large Alma Mater Studiorum $\cdot$ Università di Bologna \par}
+    \vspace{0.3cm}
+    \hrule
+    \vspace{0.4cm}
+    {\scshape\large Dipartimento di Informatica -- Scienza e Ingegneria \par}
+    \vspace{0.2cm}
+    {\large Laurea Triennale in Ingegneria e Scienze Informatiche \par}
+    
+    \vfill
+    
+    {\huge\bfseries Multi-Agent Reinforcement Learning for Cooperative UAV Navigation \par}
+    \vspace{0.6cm}
+    {\large Tesi di Laurea in \guillemotleft{}Reti di Telecomunicazioni\guillemotright{} \par}
+    
+    \vfill
+    
+    \begin{minipage}[t]{0.45\textwidth}
+        \raggedright
+        {\large \textit{Relatore:}\\[0.2cm]
+        \textbf{Andrea Piroddi}}
+    \end{minipage}%
+    \hfill
+    \begin{minipage}[t]{0.45\textwidth}
+        \raggedleft
+        {\large \textit{Presentata da:}\\[0.2cm]
+        \textbf{Nicholas Guerra}}
+    \end{minipage}
+    
+    \vfill
+    
+    \hrule
+    \vspace{0.4cm}
+    {\large Anno Accademico 2025/2026\\[0.15cm]
+    Sessione di novembre \par}
+\end{titlepage}

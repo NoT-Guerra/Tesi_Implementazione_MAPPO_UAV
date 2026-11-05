@@ -1,0 +1,42 @@
+Corrispondenza tra numero di figura nella tesi e file
+(usare il PDF, vettoriale, in \includegraphics; il PNG è a 300 dpi)
+
+Figura 2.1	fig_2_1_ctde.pdf / fig_2_1_ctde.png
+Figura 3.1	fig_3_1_simulazione.png
+Figura 3.2	fig_3_2_osservazione.pdf / fig_3_2_osservazione.png
+Figura 3.3	fig_3_3_collisioni.pdf / fig_3_3_collisioni.png
+Figura 4.1	fig_4_1_architettura_mappo.pdf / fig_4_1_architettura_mappo.png
+Figura 5.1	fig_5_1_tre_fasi_training.pdf / fig_5_1_tre_fasi_training.png
+Figura 6.1	fig_6_1_success_rate.pdf / fig_6_1_success_rate.png
+Figura 6.2	fig_6_2_reward.pdf / fig_6_2_reward.png
+Figura 6.3	fig_6_3_passi_medi.pdf / fig_6_3_passi_medi.png
+Figura 6.4	fig_6_4_success_rate_per_seme.pdf / fig_6_4_success_rate_per_seme.png
+Figura 6.5	fig_6_5_tempo_throughput.pdf / fig_6_5_tempo_throughput.png
+Figura 6.6	fig_6_6_risorse_cpu_ram.pdf / fig_6_6_risorse_cpu_ram.png
+Figura 6.7	fig_6_7_calibrazione_1uav.pdf / fig_6_7_calibrazione_1uav.png
+Figura 6.8	fig_6_8_calibrazione_2uav.pdf / fig_6_8_calibrazione_2uav.png
+Figura 6.9	fig_6_9_mappo_3_4_uav.pdf / fig_6_9_mappo_3_4_uav.png
+Figura 6.10	fig_6_10_preliminari_ppo.pdf / fig_6_10_preliminari_ppo.png
+Figura 7.1	fig_7_1_4uav_1M_vs_4M.pdf / fig_7_1_4uav_1M_vs_4M.png
+Figura 7.2	fig_7_2_4uav_4M_tempo_passi.pdf / fig_7_2_4uav_4M_tempo_passi.png
+Figura 7.3	fig_7_3_4uav_4M_curve.pdf / fig_7_3_4uav_4M_curve.png
+Figura 7.4	fig_7_4_4uav_4M_entropia.pdf / fig_7_4_4uav_4M_entropia.png
+Figura 7.5	fig_7_5_4uav_4M_lunghezza_ppo.pdf / fig_7_5_4uav_4M_lunghezza_ppo.png
+Figura 7.6	fig_7_6_scomposizione_ricompensa.pdf / fig_7_6_scomposizione_ricompensa.png
+Figura 7.7	fig_7_7_dilemma_simmetrico.pdf / fig_7_7_dilemma_simmetrico.png
+Figura 7.8	fig_7_8_tipi_stallo.pdf / fig_7_8_tipi_stallo.png
+Figura 8.1	fig_8_1_strato_risoluzione.pdf / fig_8_1_strato_risoluzione.png
+Figura 8.2	fig_8_2_traccia_caso_1b.pdf / fig_8_2_traccia_caso_1b.png
+Figura 8.3	fig_8_3_strato_sr_collisioni.pdf / fig_8_3_strato_sr_collisioni.png
+Figura 8.4	fig_8_4_strato_cause_interventi.pdf / fig_8_4_strato_cause_interventi.png
+Figura A.1	fig_A_1_panoramica.pdf / fig_A_1_panoramica.png
+Figura A.2	fig_A_2_caso_1a_mappo.pdf / fig_A_2_caso_1a_mappo.png
+Figura A.3	fig_A_3_caso_1a_ppo.pdf / fig_A_3_caso_1a_ppo.png
+Figura A.4	fig_A_4_caso_1b_mappo.pdf / fig_A_4_caso_1b_mappo.png
+Figura A.5	fig_A_5_caso_1b_ppo.pdf / fig_A_5_caso_1b_ppo.png
+Figura A.6	fig_A_6_caso_2a_mappo.pdf / fig_A_6_caso_2a_mappo.png
+Figura A.7	fig_A_7_caso_2a_ppo.pdf / fig_A_7_caso_2a_ppo.png
+Figura A.8	fig_A_8_caso_2b_mappo.pdf / fig_A_8_caso_2b_mappo.png
+Figura A.9	fig_A_9_caso_2b_ppo.pdf / fig_A_9_caso_2b_ppo.png
+Figura A.10	fig_A_10_caso_2c_mappo.pdf / fig_A_10_caso_2c_mappo.png
+Figura A.11	fig_A_11_caso_2c_ppo.pdf / fig_A_11_caso_2c_ppo.png
