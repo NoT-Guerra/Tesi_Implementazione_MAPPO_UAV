@@ -74,13 +74,13 @@ Un'architettura diffusa per rispondere a queste difficoltà è il paradigma dell
 \section{Problema e obiettivi}
 \label{sec:problema_obiettivi}
 
-Il problema affrontato è la navigazione cooperativa di una flotta di $N$ UAV su una griglia bidimensionale $10 \times 10$, con ostacoli statici generati randomicamente a ogni episodio, in cui tutti i velivoli devono raggiungere un unico punto di arrivo comune (l'hangar) entro un limite di $100$ passi per velivolo. Il successo è definito a livello di squadra: l'episodio termina positivamente soltanto quando tutti i droni sono atterrati. Le collisioni tra velivoli, sia per occupazione della stessa cella sia per scambio frontale di posizione, e quelle con ostacoli e bordi della mappa sono penalizzate.
+Il problema affrontato è la navigazione cooperativa di una flotta di $N$ UAV su una griglia bidimensionale $10 \times 10$, con ostacoli statici generati randomicamente a ogni episodio, in cui tutti i velivoli devono raggiungere un unico punto di arrivo comune (l'hangar) entro un orizzonte massimo di $100$ passi di simulazione per episodio. Il successo è definito a livello di squadra: l'episodio termina positivamente soltanto quando tutti i droni sono atterrati. Le collisioni tra velivoli, sia per occupazione della stessa cella sia per scambio frontale di posizione, e quelle con ostacoli e bordi della mappa sono penalizzate.
 
 Gli obiettivi del lavoro sono i seguenti:
 \begin{itemize}
     \item progettare e implementare un ambiente di simulazione parametrico nel numero di droni, compatibile con l'interfaccia Gymnasium, con rilevamento completo delle collisioni;
     \item realizzare un'implementazione propria in PyTorch di un algoritmo esistente, MAPPO \parencite{yu2022}, con \emph{parameter sharing} e osservazioni ego-centriche, e confrontarlo con un PPO centralizzato, assunto come linea di base;
-    \item valutare in modo statisticamente rigoroso le prestazioni di entrambi gli approcci al variare della dimensione della flotta, da uno a quattro droni, adottando valutazioni su $100$ episodi per ciascuno di tre semi indipendenti;
+    \item valutare in modo sistematico e riproducibile le prestazioni di entrambi gli approcci al variare della dimensione della flotta, da uno a quattro droni, adottando valutazioni su $100$ episodi per ciascuno dei modelli addestrati con tre semi distinti;
     \item analizzare le cause del degrado delle prestazioni a quattro droni, anche estendendo l'addestramento a $4.000.000$ di passi, e individuare i fenomeni di blocco (\emph{deadlock}) e di oscillazione (\emph{livelock}) che ne sono responsabili;
     \item introdurre e validare, senza riaddestrare le \emph{policy}, uno strato di risoluzione dei conflitti separato dalle \emph{policy} stesse.
 \end{itemize}
@@ -89,16 +89,15 @@ Gli obiettivi del lavoro sono i seguenti:
 \label{sec:sintesi_lavoro}
 
 \subsection{Ambiente e metodologia}
-È stato sviluppato un ambiente multi-agente parametrico per flotte da uno a quattro droni, che gestisce le \emph{vertex collision} (due droni nella stessa cella) e le \emph{edge collision} (scambio frontale di posizione), assegna una ricompensa cooperativa di squadra e consente la coabitazione dei velivoli già atterrati sull'hangar. La procedura di valutazione, fondata su $300$ episodi per configurazione ($100$ per ciascuno dei semi $42$, $123$ e $999$), riduce l'errore standard sul tasso di successo da circa $\pm 15\%$ a meno di $\pm 3\%$ rispetto alle prime valutazioni su $10$ episodi.
+È stato sviluppato un ambiente multi-agente parametrico per flotte da uno a quattro droni, che gestisce le \emph{vertex collision} (due droni nella stessa cella) e le \emph{edge collision} (scambio frontale di posizione), assegna una ricompensa cooperativa di squadra e consente la coabitazione dei velivoli già atterrati sull'hangar. La procedura di valutazione si fonda su $300$ episodi per configurazione ($100$ per ciascuno dei modelli addestrati con i semi $42$, $123$ e $999$). Rispetto alle prime valutazioni su $10$ episodi, ciò riduce l'errore campionario sulla stima del tasso di successo, che nel caso peggiore passa da circa $\pm 15\%$ a meno di $\pm 3\%$ sull'insieme dei $300$ episodi. Tale grandezza descrive la variabilità tra episodi ed è distinta dalla dispersione tra i modelli addestrati con semi diversi, riportata nella forma media $\pm$ deviazione standard nei risultati.
 
 \subsection{Confronto sperimentale}
-Il confronto tra MAPPO e PPO centralizzato da uno a quattro droni mostra un leggero vantaggio di MAPPO per flotte piccole, con differenze dell'ordine della variabilità tra i semi: con un drone il tasso di successo è $79,7 \pm 4,9\%$ contro $76,7 \pm 3,1\%$, mentre con due droni è $69,0 \pm 4,4\%$ contro $64,7 \pm 2,5\%$. Con tre e quattro droni l'ordine si inverte ($34,7 \pm 8,1\%$ contro $39,3 \pm 5,5\%$ e $22,7 \pm 4,7\%$ contro $26,3 \pm 3,1\%$ a $1.000.000$ di passi). L'estensione dell'addestramento a $4.000.000$ di passi non migliora MAPPO: a quattro droni il tasso di successo di MAPPO scende a $18,0 \pm 6,6\%$ mentre quello di PPO sale a $41,0 \pm 7,5\%$.
+Il confronto tra MAPPO e PPO centralizzato da uno a quattro droni mostra un leggero vantaggio di MAPPO per flotte piccole, con differenze dell'ordine della variabilità tra i semi: con un drone il tasso di successo è $79,7 \pm 4,9\%$ contro $76,7 \pm 3,1\%$, mentre con due droni è $69,0 \pm 4,4\%$ contro $64,7 \pm 2,5\%$. Con tre e quattro droni l'ordine si inverte ($34,7 \pm 8,1\%$ contro $39,3 \pm 5,5\%$ e $22,7 \pm 4,7\%$ contro $26,3 \pm 3,1\%$ a $1.000.000$ di passi). L'estensione dell'addestramento a $4.000.000$ di passi non migliora MAPPO: a quattro droni il tasso di successo di MAPPO scende a $18,0 \pm 6,6\%$ mentre quello di PPO sale a $41,0 \pm 7,5\%$. I valori sono medie e deviazioni standard tra i tre semi di addestramento. Poiché le due implementazioni differiscono anche per architettura, iperparametri e libreria impiegata, il confronto non isola l'effetto del paradigma CTDE o del \emph{parameter sharing}.
 
 \subsection{Diagnosi del fallimento a quattro droni}
 L'analisi della ricompensa ha mostrato che il valore medio osservato (circa $-1083$ per MAPPO) è molto inferiore al valore di riferimento di $-400$, ottenuto nell'ipotesi che nessun drone arrivi a destinazione e che non avvengano collisioni ($4\text{ droni} \times 100\text{ passi} \times (-1)$). La differenza è attribuibile alle penalità da collisioni tra droni e con gli ostacoli. Il problema può essere descritto come un dilemma di coordinazione simmetrica. Avendo la stessa configurazione e gli stessi pesi decisionali, i droni compiono in modo deterministico la medesima mossa, il che li porta a incastrarsi lungo i bordi dell'hangar o negli stretti passaggi di una cella tra la montagna e il perimetro. Allo stesso tempo, il calo dell'entropia evidenzia come i droni passino da un'esplorazione probabilistica (capace di sciogliere i blocchi) a un processo decisionale quasi deterministico.
-\newpage
 \subsection{Strato di risoluzione dei conflitti}
-È stato introdotto, a livello di esecuzione, uno strato composto da regole di precedenza, mascheramento delle azioni non valide (\emph{action masking}) e meccanismo anti-\emph{livelock}, applicabile senza riaddestramento. Su $300$ episodi a quattro droni il tasso di successo passa dal $21,3\%$ al $99,0\%$ per MAPPO e dal $47,0\%$ al $100,0\%$ per PPO, mentre le \emph{vertex collision} scendono da $7.444$ a $2$ e da $6.002$ a $3$. Lo strato è discusso come componente distinta dalle \emph{policy}: poiché usa informazioni sugli altri velivoli, non rientra nell'esecuzione puramente decentralizzata, e l'esito va letto come risultato sulla componente di controllo complessiva. Il risultato è inoltre misurato sugli stessi semi impiegati per l'addestramento e non fornisce, pertanto, una stima della generalizzazione a semi non visti.
+È stato introdotto, a livello di esecuzione, uno strato composto da regole di precedenza, mascheramento delle azioni non valide (\emph{action masking}) e meccanismo anti-\emph{livelock}, applicabile senza riaddestramento. Su $300$ episodi a quattro droni, generati con una sequenza diversa da quella del \emph{benchmark}, il tasso di successo passa dal $21,3\%$ al $99,0\%$ per MAPPO e dal $47,0\%$ al $100,0\%$ per PPO. Le \emph{vertex collision} registrate scendono da $7.444$ a $2$ e da $6.002$ a $3$, ma tale riduzione non costituisce una misura indipendente di maggiore sicurezza: le contese risolte preventivamente dalla regola di precedenza non sono conteggiate come collisioni, e il risultato va letto insieme al numero di interventi dello strato e ai casi residui di \emph{livelock} (tre episodi per MAPPO). Lo strato è discusso come componente distinta dalle \emph{policy}: poiché la regola di precedenza richiede di conoscere le mosse che i droni intendono compiere nello stesso passo, il sistema complessivo non è a esecuzione puramente decentralizzata, e l'esito va letto come risultato dell'insieme di \emph{policy} e regole. Il risultato è inoltre misurato sugli stessi semi impiegati per l'addestramento e non fornisce, pertanto, una stima della generalizzazione a semi non visti.
 
 % =============================================================================
 % CAPITOLO 2 - CONTESTO E STATO DELL'ARTE
@@ -145,7 +144,7 @@ Il caso utilizzato come linea di base è quello del PPO centralizzato, in cui un
 \section{Addestramento centralizzato ed esecuzione decentralizzata, MAPPO e \emph{parameter sharing}}
 \label{sec:ctde_mappo}
 
-Il paradigma CTDE (\emph{Centralized Training with Decentralized Execution}) sfrutta durante l'addestramento un \emph{critic} centralizzato, che accede a informazioni globali per stimare il valore dello stato congiunto, mentre in fase operativa ogni agente seleziona la propria azione soltanto con il proprio \emph{actor}, senza comunicare. Una variante di PPO secondo il paradigma CTDE è MAPPO (\emph{Multi-Agent PPO}) \parencite{yu2022}, che combina il \emph{clipped objective} di PPO con una \emph{value function} centralizzata.
+Il paradigma CTDE (\emph{Centralized Training with Decentralized Execution}) sfrutta durante l'addestramento un \emph{critic} centralizzato, che accede a informazioni globali per stimare il valore dello stato congiunto, mentre in fase operativa ogni agente seleziona la propria azione soltanto con il proprio \emph{actor}, sulla base della propria osservazione e senza un coordinatore centrale. Una variante di PPO secondo il paradigma CTDE è MAPPO (\emph{Multi-Agent PPO}) \parencite{yu2022}, che combina il \emph{clipped objective} di PPO con una \emph{value function} centralizzata.
 
 La condivisione dei parametri (\emph{parameter sharing}) consiste nell'impiegare un'unica rete per l'\emph{actor} di tutti gli agenti omogenei \parencite{gupta2017}. Dato che agenti diversi eseguono lo stesso compito con la stessa struttura di osservazione, la rete apprende dall'esperienza di tutti contemporaneamente. Il numero di parametri non cresce con la flotta e la dimensione dell'uscita resta pari al numero di azioni individuali. Per rendere significativa la condivisione si adotta una rappresentazione ego-centrica dell'osservazione, nella quale le informazioni proprie di ciascun agente occupano una posizione fissa nel vettore.
 
@@ -168,7 +167,9 @@ Il problema della navigazione di più agenti verso destinazioni senza collisioni
     \item l'\emph{edge conflict}, o conflitto di scambio (\emph{swap}), quando due agenti attraversano lo stesso arco in direzioni opposte scambiandosi di posizione.
 \end{itemize}
 
-Gli approcci tradizionali al MAPF sono basati su pianificazione, tra cui la pianificazione prioritaria, in cui agli agenti è assegnato un ordine di precedenza e ciascuno pianifica evitando le traiettorie già riservate dagli agenti con priorità maggiore \parencite{silver2005}. Approcci basati su apprendimento, come PRIMAL \parencite{sartoretti2019}, addestrano invece \emph{policy} decentralizzate che agiscono sulla base di osservazioni locali. Questi ultimi scalano meglio, ma sono esposti a due fenomeni tipici:
+Gli approcci tradizionali al MAPF sono basati su pianificazione, tra cui la pianificazione prioritaria, in cui agli agenti è assegnato un ordine di precedenza e ciascuno pianifica evitando le traiettorie già riservate dagli agenti con priorità maggiore \parencite{silver2005}. Approcci basati su apprendimento, come PRIMAL \parencite{sartoretti2019}, addestrano invece \emph{policy} decentralizzate che agiscono sulla base di osservazioni locali. 
+\newpage
+Questi ultimi scalano meglio, ma sono esposti a due fenomeni tipici:
 \begin{itemize}
     \item il \emph{deadlock} (stallo), in cui due o più agenti restano bloccati in configurazioni dalle quali nessuno riesce a progredire, per esempio ai lati di un passaggio stretto;
     \item il \emph{livelock}, in cui gli agenti si muovono continuamente senza avvicinarsi al proprio obiettivo, per esempio oscillando tra due celle.
@@ -302,7 +303,7 @@ L'ambiente distingue tre classi di eventi di collisione: l'urto con un ostacolo 
 
 \subsection{Urti con ostacoli e bordi}
 Quando l'azione di un drone lo porterebbe fuori dalla griglia o in una cella occupata da una montagna, il movimento viene annullato e il drone rimane nella cella precedente. Il drone subisce una penalità individuale di $-10$, come già avviene nell'ambiente a singolo drone.
-
+\newpage
 \subsection{\emph{Vertex collision}}
 Si ha una \emph{vertex collision} quando due droni tentano di occupare nello stesso istante la stessa cella, diversa dall'hangar. Indicata con $p_i$ la posizione corrente del drone $i$, con $p_i'$ la posizione che esso assumerebbe a seguito dell'azione scelta e con $h$ la posizione dell'hangar, la condizione è
 \[
@@ -345,11 +346,11 @@ Il comportamento dell'ambiente multi-agente è disciplinato da sette regole, imp
     \item \textbf{Posizionamento distinto} -- all'inizio di ogni episodio tutti i droni sono collocati in celle diverse, senza sovrapporsi tra loro, agli ostacoli o all'hangar;
     \item \textbf{Collisioni tra droni} -- due droni che tentano di entrare nella stessa cella, diversa dall'hangar, oppure di scambiarsi di posizione, subiscono la penalità congiunta di $-20$ ($-10$ ciascuno) e rimangono nelle posizioni di partenza;
     \item \textbf{Atterraggio e coabitazione} -- un drone che raggiunge l'hangar è marcato come arrivato, riceve un premio di $+100$ una tantum, viene mantenuto sulle coordinate del bersaglio e non paga più la penalità temporale né genera collisioni con i compagni che sopraggiungono;
+    \newpage
     \item \textbf{Penalità temporale differenziata} -- ogni drone ancora in volo subisce $-1$ a ogni passo, mentre i droni già atterrati subiscono $0$ e il passo di atterraggio è compensato dal premio di arrivo, così che la squadra non sia penalizzata dall'attesa dei compagni più lenti;
-    \item \textbf{Successo di squadra} -- l'episodio termina con successo (\allowbreak\texttt{terminated = \allowbreak all(\allowbreak arrived)}) soltanto quando tutti i droni hanno raggiunto l'hangar, mentre se ciò non accade entro $100$, passi per velivolo, l'episodio è troncato (\texttt{truncated = \allowbreak True}) e considerato fallito;
+    \item \textbf{Successo di squadra} -- l'episodio termina con successo (\allowbreak\texttt{terminated = \allowbreak all(\allowbreak arrived)}) soltanto quando tutti i droni hanno raggiunto l'hangar, mentre se ciò non accade entro $T_{\max} = 100$ passi di simulazione, l'episodio è troncato (\texttt{truncated = \allowbreak True}) e considerato fallito;
     \item \textbf{Ricompensa cooperativa} -- il valore restituito a ogni passo è lo scalare complessivo della squadra, che allinea l'interesse di ciascun drone all'efficienza e alla sicurezza collettiva, mentre le ricompense individuali sono rese disponibili nel dizionario diagnostico \texttt{info} (\texttt{individual\_\allowbreak rewards}) insieme al \emph{flag} booleano \texttt{success}.
 \end{enumerate}
-\newpage
 La Tabella~\ref{tab:3_3} riassume gli eventi che concorrono alla ricompensa.
 
 \begin{table}[htbp]
@@ -376,7 +377,7 @@ R_t = \sum_i r_{i,t}, \quad \text{con } r_{i,t} = +100\text{ (se $i$ atterra al 
 \end{multline*}
 
 L'episodio consente di individuare alcuni valori caratteristici della ricompensa cumulativa. Il valore massimo teorico è dato dal solo premio di arrivo, $100 \cdot N$, diminuito del costo temporale dei passi di volo. Il valore di riferimento in assenza di arrivi e di collisioni è invece $N \cdot T_{\max} \cdot (-1) = -N \cdot 100$: per $N = 4$ corrisponde a $-400$. Quest'ultimo non rappresenta un minimo assoluto della ricompensa, poiché le penalità per urti e collisioni possono abbassarla ben oltre tale soglia.
-\newpage
+
 \section{Formalizzazione del modello}
 \label{sec:formalizzazione}
 
@@ -395,7 +396,7 @@ Gli elementi del modello sono riassunti nella Tabella~\ref{tab:3_4}.
         Stato iniziale     & estratto a caso a ogni episodio (posizioni distinte), con seme fissato per la riproducibilità \\
         Ricompensa $r$     & ricompensa di squadra $R_t$ della Sezione~\ref{sec:regole_ricompensa} \\
         Orizzonte          & $T_{\max} = 100$ passi, terminazione quando tutti i droni sono atterrati \\
-        Osservazione $o_i$ & $o_i = \varphi_i(s)$: riorganizzazione ego-centrica dello stato \\
+        Osservazione $o_i$ & $o_i = \varphi_i(s)$: riorganizzazione ego-centrica dello stato, che include le posizioni dei compagni, assunte note a ciascun agente (Sezione~\ref{subsec:funzione_osservazione}) \\
         \bottomrule
     \end{tabularx}
     \caption{Elementi del modello dell'ambiente.}
@@ -404,10 +405,15 @@ Gli elementi del modello sono riassunti nella Tabella~\ref{tab:3_4}.
 \end{table}
 
 \subsection{Funzione di osservazione}
+\label{subsec:funzione_osservazione}
 L'osservazione del drone $i$ è ottenuta dallo stato globale mediante la trasformazione $s \to o_i$, che dispone nell'ordine le coordinate del drone $i$, quelle del bersaglio, quelle degli ostacoli e quelle degli altri $N - 1$ droni in ordine di indice. Tale trasformazione non nasconde alcuna porzione della mappa: l'osservazione contiene la stessa informazione dello stato globale, a meno dell'etichettatura degli agenti, per cui ciascun drone conosce sempre le posizioni di tutti gli altri, del bersaglio e degli ostacoli. Disponendo le informazioni proprie sempre nelle stesse posizioni del vettore, essa rende l'osservazione ego-centrica, così che un'unica rete con parametri condivisi possa governare tutti i droni omogenei (\emph{parameter sharing}) senza dover distinguere gli agenti tramite l'indice.
-\newpage
+
+Questa scelta implica un'assunzione esplicita sul modello informativo. Le posizioni degli altri droni non sono rilevate dal singolo velivolo mediante sensori propri, ma si assumono disponibili a ciascun agente a ogni passo, come se fossero diffuse da un sistema di sorveglianza condiviso o da uno scambio periodico delle posizioni tra i velivoli. L'ambiente non simula il canale attraverso cui tale informazione viene condivisa, ma ne presuppone il contenuto nell'osservazione di ogni agente, in forma ideale: le posizioni sono esatte, sincrone e prive di ritardi o perdite.
+
 \subsection{Implicazioni}
-Poiché l'osservabilità è completa, l'incertezza di ciascun agente non riguarda lo stato del mondo, ma le azioni che i compagni sceglieranno nello stesso istante, e l'esecuzione decentralizzata esclude qualsiasi comunicazione tra i droni. Il problema è pertanto di coordinamento. Il vantaggio del \emph{critic} centralizzato, che riceve lo stato globale, non consiste quindi in un'informazione ulteriore sullo stato, ma nella stima del valore dello stato congiunto durante l'addestramento.
+Occorre distinguere due aspetti che nel paradigma CTDE vengono spesso accomunati: la decentralizzazione del processo decisionale e la disponibilità delle informazioni su cui le decisioni si basano. In esecuzione il processo decisionale è decentralizzato: ciascun drone seleziona la propria azione con il proprio \emph{actor}, a partire dalla propria osservazione, senza un coordinatore centrale e senza conoscere le azioni che i compagni sceglieranno nello stesso passo. L'informazione impiegata, invece, non è puramente locale, poiché comprende le posizioni correnti di tutti gli altri droni e presuppone quindi la forma di condivisione descritta nella Sezione~\ref{subsec:funzione_osservazione}. Ciò che è escluso è soltanto lo scambio esplicito delle intenzioni: nessun drone comunica agli altri la mossa che intende compiere.
+
+Poiché l'osservabilità delle posizioni è completa, l'incertezza di ciascun agente non riguarda lo stato del mondo, ma le azioni che i compagni sceglieranno nello stesso istante. Il problema è pertanto di coordinamento. Il vantaggio del \emph{critic} centralizzato, che riceve lo stato globale, non consiste quindi in un'informazione ulteriore sullo stato, ma nella stima del valore dello stato congiunto durante l'addestramento.
 
 % =============================================================================
 % CAPITOLO 4 - METODI: PPO E MAPPO
@@ -535,7 +541,9 @@ La Tabella~\ref{tab:4_3} riassume le differenze tra le due configurazioni.
         Osservazione                       & vettore globale assoluto, ordine fisso dei droni & osservazione locale ego-centrica \\
         \emph{Policy}                      & fattorizzata, $5 \cdot N$ \emph{logit}, un'unica rete per tutti i droni & \emph{actor} condiviso, $5$ \emph{logit} per drone \\
         \emph{Parameter sharing}           & no & sì \\
-        Esecuzione                         & centralizzata (stato globale e controllore unico) & decentralizzata (solo osservazione propria) \\
+        Esecuzione                         & centralizzata (stato globale e controllore unico) & decentralizzata (\emph{actor} applicato all'osservazione propria, che include le posizioni dei compagni) \\
+        Implementazione                    & Stable-Baselines3 v2.9.0 & propria in PyTorch \\
+        Architettura                       & 2 strati da 64 unità, Tanh & 2 strati da 128 unità, Tanh \\
         Passi di ambiente per aggiornamento & $2048$ & $1024$ \\
         Campioni dell'\emph{actor} per aggiornamento & $2048$, indipendenti da $N$ & $1024 \cdot N$ \\
         \emph{Learning rate}               & $3 \cdot 10^{-4}$ & $3 \cdot 10^{-4}$ (\emph{actor}), $1 \cdot 10^{-3}$ (\emph{critic}) \\
@@ -547,7 +555,7 @@ La Tabella~\ref{tab:4_3} riassume le differenze tra le due configurazioni.
     \fonte
 \end{table}
 
-Le due configurazioni differiscono quindi non solo per l'approccio di apprendimento (condivisione dei parametri, osservazione ego-centrica, esecuzione decentralizzata), ma anche per diversi iperparametri. Il bonus di entropia in MAPPO contrasta la convergenza prematura verso una \emph{policy} quasi deterministica, mentre PPO ne è privo. Le differenze di prestazione osservate non possono pertanto essere attribuite al solo paradigma CTDE o al \emph{parameter sharing}.
+Le due configurazioni differiscono quindi non solo per l'approccio di apprendimento (condivisione dei parametri, osservazione ego-centrica, esecuzione decentralizzata), ma anche per l'implementazione, l'architettura delle reti, la dimensione dei lotti e diversi iperparametri. Il bonus di entropia in MAPPO contrasta la convergenza prematura verso una \emph{policy} quasi deterministica, mentre PPO ne è privo. Le differenze di prestazione osservate non possono pertanto essere attribuite al solo paradigma CTDE o al \emph{parameter sharing}: il confronto sperimentale va inteso come confronto tra due configurazioni complete, mentre un confronto controllato richiederebbe di variare un solo fattore alla volta, a parità degli altri.
 
 Per $N = 1$ le due configurazioni coincidono nella struttura del problema (osservazione locale e globale identiche) e differiscono solo per l'implementazione e per gli iperparametri.
 
@@ -617,18 +625,22 @@ Per garantire riproducibilità sui risultati viene introdotto il seme del genera
     \item \textbf{Confronti equi} -- nel confronto tra algoritmi (MAPPO e PPO) o tra configurazioni ($N$ droni), lo stesso seme garantisce la stessa sequenza di mappe generate, per cui le differenze di prestazione sono attribuibili all'algoritmo e non alla fortuna degli \emph{spawn};
     \item \textbf{\emph{Debugging} deterministico} -- un comportamento anomalo osservato in un episodio (una collisione complessa, un vicolo cieco) può essere rieseguito identico per analizzarlo nel dettaglio.
 \end{itemize}
-
-Fissare il seme non significa che la mappa sia sempre la stessa: il generatore produce una sequenza deterministica di episodi, ciascuno con una configurazione diversa, per cui la flotta continua ad apprendere su mappe sempre nuove, ma la sequenza complessiva è identica da un'esecuzione all'altra. Nella prima fase del lavoro è stato usato solo il seme $42$. Il \emph{benchmark} conclusivo utilizza tre semi indipendenti ($42$, $123$ e $999$): ciascuno produce un modello distinto, addestrato e valutato separatamente, e i risultati sono aggregati come media e deviazione standard campionaria sui tre semi.
+\newpage
+Fissare il seme non significa che la mappa sia sempre la stessa: il generatore produce una sequenza deterministica di episodi, ciascuno con una configurazione diversa, per cui la flotta continua ad apprendere su mappe sempre nuove, ma la sequenza complessiva è identica da un'esecuzione all'altra. Nella prima fase del lavoro è stato usato solo il seme $42$. Il \emph{benchmark} conclusivo utilizza tre semi indipendenti ($42$, $123$ e $999$): ciascuno produce un modello distinto, addestrato e valutato separatamente, e i risultati sono aggregati come media e deviazione standard campionaria sui tre semi. Il seme di ciascun modello è impiegato anche per la sua valutazione: i semi di valutazione coincidono quindi con quelli di addestramento.
 
 \section{Protocollo di valutazione}
 \label{sec:protocollo_valutazione}
 
-Le \emph{policy} addestrate sono valutate su $100$ episodi per seme, per un totale di $300$ episodi per configurazione. Gli episodi di valutazione sono generati con lo stesso seme dell'addestramento, ma costituiscono una sequenza di mappe nuova, non osservata durante l'addestramento. Tutte le valutazioni sono deterministiche: l'azione eseguita è quella a massima probabilità (\texttt{deterministic=True} per PPO, selezione per massimo \emph{logit} per MAPPO), senza campionamento. Questa scelta differenzia le metriche di valutazione da quelle di addestramento, che derivano da \emph{policy} stocastiche.
+Le \emph{policy} addestrate sono valutate su $100$ episodi per seme, per un totale di $300$ episodi per configurazione. Gli episodi di valutazione sono generati dallo stesso seme impiegato per l'addestramento del modello. Nel \emph{benchmark} essi proseguono la sequenza pseudo-casuale dell'addestramento e sono quindi successivi agli episodi impiegati per l'apprendimento; sono tuttavia estratti dallo stesso generatore e dalla stessa distribuzione, per cui la disgiunzione delle singole configurazioni da quelle già incontrate non è garantita. Non si dispone, pertanto, di una valutazione su semi completamente indipendenti, e i risultati non consentono di stimare la generalizzazione a semi non visti. Tutte le valutazioni sono deterministiche: l'azione eseguita è quella a massima probabilità (\texttt{deterministic=True} per PPO, selezione per massimo \emph{logit} per MAPPO), senza campionamento. Questa scelta differenzia le metriche di valutazione da quelle di addestramento, che derivano da \emph{policy} stocastiche.
 
 La scelta del numero di episodi è motivata dalla varianza campionaria. La prima versione del protocollo utilizzava $10$ episodi per configurazione. Per un tasso di successo $p$ stimato su $n$ episodi, l'errore standard della stima è $\sqrt{p(1 - p)/n}$, che nel caso peggiore ($p = 0,5$) vale circa $\pm 15\%$ per $n = 10$, $\pm 5\%$ per $n = 100$ e $\pm 3\%$ per i $300$ episodi complessivi. Con soli $10$ episodi un singolo episodio sposta la metrica del $10\%$, e uno \emph{spawn} favorevole o sfavorevole può distorcere il risultato.
 
-Il costo computazionale della valutazione è trascurabile rispetto all'addestramento. La valutazione è pura inferenza in avanti (\texttt{torch.no\_grad()}), senza calcolo di gradienti né ottimizzazione e senza \emph{rendering} grafico: con un \emph{throughput} superiore a $4.000$ passi al secondo e circa $50$ passi per episodio, $100$ episodi richiedono circa $1,3$ secondi e l'intera suite di otto valutazioni circa $11$ secondi, cioè lo $0,24\%$ del tempo totale.
+Nei risultati occorre distinguere due fonti di variabilità. La prima è la variabilità tra episodi: fissato un modello, il tasso di successo stimato su un numero finito di episodi è soggetto all'errore campionario appena descritto, che si riduce aumentando il numero di episodi. La seconda è la variabilità tra addestramenti: modelli addestrati con semi diversi raggiungono prestazioni diverse, e questa dispersione non si riduce aumentando gli episodi di valutazione, ma soltanto aumentando il numero di semi. 
 \newpage
+Salvo diversa indicazione, i valori riportati nella forma media $\pm$ deviazione standard sono calcolati sui tre valori per seme, ciascuno stimato su $100$ episodi: essi descrivono quindi la variabilità tra addestramenti su un campione di soli tre modelli, comprensiva della componente dovuta all'errore campionario di ciascuna stima. L'errore standard binomiale descrive invece la precisione della stima per un singolo modello o sull'insieme dei $300$ episodi.
+
+Il costo computazionale della valutazione è trascurabile rispetto all'addestramento. La valutazione è pura inferenza in avanti (\texttt{torch.no\_grad()}), senza calcolo di gradienti né ottimizzazione e senza \emph{rendering} grafico: con un \emph{throughput} superiore a $4.000$ passi al secondo e circa $50$ passi per episodio, $100$ episodi richiedono circa $1,3$ secondi e l'intera suite di otto valutazioni circa $11$ secondi, cioè lo $0,24\%$ del tempo totale.
+
 \section{Metriche}
 \label{sec:metriche}
 
@@ -658,7 +670,7 @@ Le metriche sono riportate nella Tabella~\ref{tab:5_2}.
 L'utilizzo della CPU è misurato con \texttt{psutil}, che somma il carico di ciascun \emph{thread} logico: il $100\%$ corrisponde a un singolo \emph{core} interamente saturato. Sulla macchina impiegata, con $16$ \emph{thread} logici, il massimo teorico è $1600\%$. Valori attorno a $800\%$ indicano la saturazione degli otto \emph{core} fisici, in accordo con il parallelismo di PyTorch, che imposta otto \emph{thread}. Con la rete più piccola di PPO si osserva invece un impegno di circa quattro o cinque \emph{core} ($400$--$500\%$).
 
 Durante l'addestramento, le metriche mostrate a schermo e registrate su TensorBoard (\texttt{rollout/ep\_rew\_mean}, \texttt{rollout/success\_rate}) sono medie mobili sugli ultimi $100$ episodi. Questa scelta non è motivata da ragioni computazionali, poiché il costo sarebbe minimo, ma dall'esigenza di escludere dall'analisi i risultati iniziali, molto negativi, della fase di esplorazione e di riflettere la prestazione corrente della \emph{policy}.
-\newpage
+
 \section{Piattaforma e strumenti}
 \label{sec:piattaforma}
 
@@ -693,7 +705,7 @@ Il tracciamento delle risorse è affidato a un modulo di monitoraggio (\texttt{R
 \chapter{Risultati I: \emph{baseline} e scalabilità da 1 a 4 UAV}
 \label{chap:risultati_1}
 
-Il capitolo riporta i risultati del confronto tra MAPPO e PPO centralizzato al variare della dimensione della flotta, il loro costo computazionale e l'analisi delle curve di addestramento che ha guidato la scelta dei budget. Tutti i valori sono medie e deviazioni standard campionarie sui tre semi ($42$, $123$, $999$), con $100$ episodi di valutazione deterministica per seme.
+Il capitolo riporta i risultati del confronto tra MAPPO e PPO centralizzato al variare della dimensione della flotta, il loro costo computazionale e l'analisi delle curve di addestramento che ha guidato la scelta dei budget. Tutti i valori sono medie e deviazioni standard campionarie sui tre semi ($42$, $123$, $999$), con $100$ episodi di valutazione deterministica per seme, e descrivono quindi la variabilità tra addestramenti (Sezione~\ref{sec:protocollo_valutazione}).
 
 \section{Prestazioni da uno a quattro droni}
 \label{sec:prestazioni_1_4}
@@ -751,7 +763,7 @@ La Tabella~\ref{tab:6_1} riporta le prestazioni di valutazione e le Figure~\ref{
 Per entrambi gli algoritmi il tasso di successo diminuisce in modo costante all'aumentare dei droni: da $79,7\%$ a $22,7\%$ per MAPPO e da $76,7\%$ a $26,3\%$ per PPO. Il calo più marcato si registra tra due e tre droni (circa $34$ punti percentuali per MAPPO e $25$ per PPO). Un risultato di squadra richiede che tutti gli $N$ droni raggiungano l'hangar, per cui ogni drone aggiuntivo introduce nuove occasioni di conflitto in prossimità del bersaglio.
 
 \subsection{Confronto tra gli algoritmi}
-MAPPO ottiene un tasso di successo più elevato con uno e due droni ($79,7\%$ contro $76,7\%$ e $69,0\%$ contro $64,7\%$) e un \emph{reward} medio superiore ($-115,6$ contro $-165,3$ e $-267,0$ contro $-330,7$). Con tre e quattro droni l'ordine si inverte: PPO ottiene il $39,3\%$ contro il $34,7\%$ di MAPPO e il $26,3\%$ contro il $22,7\%$, con un \emph{reward} migliore. Le differenze vanno però lette con cautela. Gli scarti (da $3$ a $4,7$ punti) sono dello stesso ordine della dispersione tra i semi e dell'errore standard sulla differenza, circa $4$ punti su $300$ episodi, e la loro direzione non è concorde in tutti i semi (Figura~\ref{fig:6_4}). Con soli tre semi, quindi, le differenze non sono significative.
+MAPPO ottiene un tasso di successo più elevato con uno e due droni ($79,7\%$ contro $76,7\%$ e $69,0\%$ contro $64,7\%$) e un \emph{reward} medio superiore ($-115,6$ contro $-165,3$ e $-267,0$ contro $-330,7$). Con tre e quattro droni l'ordine si inverte: PPO ottiene il $39,3\%$ contro il $34,7\%$ di MAPPO e il $26,3\%$ contro il $22,7\%$, con un \emph{reward} migliore. Le differenze vanno però lette con cautela. Gli scarti (da $3$ a $4,7$ punti) sono dello stesso ordine della dispersione tra i semi e dell'errore standard sulla differenza, circa $4$ punti su $300$ episodi, e la loro direzione non è concorde in tutti i semi (Figura~\ref{fig:6_4}). Con soli tre semi, quindi, le differenze non sono significative. Esse, inoltre, non sono attribuibili al solo paradigma CTDE o al \emph{parameter sharing}, poiché le due configurazioni differiscono anche per implementazione, architettura e iperparametri (Sezione~\ref{sec:confronto_configurazioni}).
 
 \begin{figure}[htbp]
     \centering
@@ -955,7 +967,9 @@ MAPPO e PPO sono stati riaddestrati a quattro droni con un budget di $4.000.000$
     \fonte
 \end{table}
 
-L'aumento del budget ha effetti opposti sui due algoritmi (Figura~\ref{fig:7_1}). Il tasso di successo di MAPPO non migliora, anzi passa dal $22,7 \pm 4,7\%$ a $1.000.000$ di passi al $18,0 \pm 6,6\%$. Quello di PPO sale dal $26,3 \pm 3,1\%$ al $41,0 \pm 7,5\%$. Raggiunti i $4$ milioni di passi, PPO stacca di $23$ punti: pari a circa tre volte la deviazione standard e confermato su tutti e tre i \emph{seed}. Il \emph{reward} medio dei due algoritmi resta invece simile ($-1.083,3$ contro $-1.011,6$) e molto negativo. Sul piano computazionale una \emph{run} di MAPPO dura in media circa $1$ ora e $30$ minuti e una di PPO circa $57$ minuti (Figura~\ref{fig:7_2}), con un \emph{throughput} di PPO superiore del $56\%$.
+L'aumento del budget ha effetti opposti sui due algoritmi (Figura~\ref{fig:7_1}). Il tasso di successo di MAPPO non migliora, anzi passa dal $22,7 \pm 4,7\%$ a $1.000.000$ di passi al $18,0 \pm 6,6\%$. Quello di PPO sale dal $26,3 \pm 3,1\%$ al $41,0 \pm 7,5\%$. 
+\newpage
+Raggiunti i $4$ milioni di passi, PPO stacca di $23$ punti: pari a circa tre volte la deviazione standard e confermato su tutti e tre i \emph{seed}. Anche questo divario va riferito all'insieme delle differenze tra le due configurazioni, e non al solo paradigma di addestramento. Il \emph{reward} medio dei due algoritmi resta invece simile ($-1.083,3$ contro $-1.011,6$) e molto negativo. Sul piano computazionale una \emph{run} di MAPPO dura in media circa $1$ ora e $30$ minuti e una di PPO circa $57$ minuti (Figura~\ref{fig:7_2}), con un \emph{throughput} di PPO superiore del $56\%$.
 
 \begin{figure}[htbp]
     \centering
@@ -1089,10 +1103,9 @@ L'osservazione diretta degli episodi falliti e un test su $300$ episodi per algo
     \label{fig:7_8}
     \fonte
 \end{figure}
-
+\newpage
 La Tabella~\ref{tab:7_3} riporta la frequenza dei fallimenti e delle loro cause nell'ambiente standard.
-
-\begin{table}[htbp]
+\begin{table}[!b]
     \centering
     \small
     \begin{tabular}{lcc}
@@ -1134,7 +1147,7 @@ Prima di intervenire sul codice sono state valutate tre possibili modifiche alla
 \chapter{Strato di risoluzione dei conflitti}
 \label{chap:strato_risoluzione}
 
-Il capitolo descrive lo strato introdotto in fase di esecuzione per eliminare gli stalli individuati e ne riporta la validazione su scenari critici e su un test di $300$ episodi per algoritmo.
+Il capitolo descrive lo strato introdotto in fase di esecuzione per risolvere gli stalli individuati e ne riporta la validazione su scenari critici e su un test di $300$ episodi per algoritmo.
 
 \section{Principio e posizionamento}
 \label{sec:principio_posizionamento}
@@ -1146,7 +1159,9 @@ Lo strato di risoluzione dei conflitti si colloca tra le \emph{policy} addestrat
     \item un meccanismo \emph{anti-livelock}, che interrompe le oscillazioni cicliche.
 \end{itemize}
 
-Lo strato è una componente distinta dalle \emph{policy}, e i requisiti informativi dei tre meccanismi sono diversi. Il mascheramento e il meccanismo \emph{anti-livelock} usano solo informazioni di cui ogni drone dispone individualmente: la propria posizione, quella degli ostacoli, la propria traiettoria recente e l'esito del proprio ultimo movimento. La regola di precedenza, invece, richiede di conoscere le mosse che i droni intendono compiere nello stesso passo, e presuppone quindi un arbitro centrale o una comunicazione tra i droni. Il sistema risultante non è più a esecuzione puramente decentralizzata, e i risultati di questo capitolo vanno letti come prestazioni dell'insieme di \emph{policy} e strato, non della sola \emph{policy}. Nei test i tre meccanismi sono sempre attivati insieme: il contributo di ciascuno non è stato misurato separatamente. La Figura~\ref{fig:8_1} schematizza il funzionamento dello strato.
+Lo strato è una componente distinta dalle \emph{policy}, e i requisiti informativi dei tre meccanismi sono diversi. Il mascheramento e il meccanismo \emph{anti-livelock} usano solo informazioni di cui ogni drone dispone individualmente: la propria posizione, quella degli ostacoli, la propria traiettoria recente e l'esito del proprio ultimo movimento. La regola di precedenza, invece, richiede di conoscere le mosse che i droni intendono compiere nello stesso passo, e presuppone quindi un arbitro centrale o una comunicazione tra i droni. Il sistema risultante non è più a esecuzione puramente decentralizzata, e i risultati di questo capitolo vanno letti come prestazioni dell'insieme di \emph{policy} e strato, non della sola \emph{policy}. Nei test i tre meccanismi sono sempre attivati insieme: il contributo di ciascuno non è stato misurato separatamente.
+
+A ogni passo lo strato opera in una sequenza fissata. Per ciascun drone non ancora atterrato si calcolano i cinque \emph{logit} della \emph{policy} (per PPO, quelli della componente della distribuzione multicategorica relativa al drone); si applica il mascheramento delle azioni non valide; si applica il meccanismo \emph{anti-livelock}; si seleziona l'azione in modo deterministico. L'azione congiunta così ottenuta è trasmessa all'ambiente, che esegue i due stadi del metodo \texttt{step()} con la regola di precedenza. Lo strato è impiegato soltanto in valutazione: le \emph{policy} sono state addestrate senza di esso. Gli interventi riportati nel seguito sono conteggiati come segue: per il mascheramento, i passi in cui l'azione selezionata da un drone differisce da quella a massimo \emph{logit} della rete; per il meccanismo \emph{anti-livelock}, i passi in cui l'azione eseguita differisce da quella risultante dal mascheramento; per la regola di precedenza, ciascun drone trattenuto nella propria cella a favore di un altro. La Figura~\ref{fig:8_1} schematizza il funzionamento dello strato.
 
 \begin{figure}[htbp]
     \centering
@@ -1155,42 +1170,45 @@ Lo strato è una componente distinta dalle \emph{policy}, e i requisiti informat
     \label{fig:8_1}
     \fonte
 \end{figure}
-
+\newpage
 \section{Regola di precedenza}
 \label{sec:regola_precedenza}
 
-La regola modifica il secondo stadio del metodo \texttt{step()}. Il primo stadio, con l'annullamento dei movimenti verso bordi e ostacoli e la relativa penalità, resta invariato, così come il trattamento delle \emph{edge collision}, che continuano a essere penalizzate e bloccate. I \emph{vertex conflict} sono invece risolti in modo iterativo:
+La regola modifica il secondo stadio del metodo \texttt{step()}. Il primo stadio, con l'annullamento dei movimenti verso bordi e ostacoli e la relativa penalità, resta invariato. Nel secondo stadio si esaminano dapprima le \emph{edge collision}, che continuano a essere penalizzate ($-20$) e bloccate come nell'ambiente standard. Si risolvono quindi i \emph{vertex conflict} mediante una procedura iterativa. A ogni iterazione i droni non ancora atterrati sono raggruppati per cella di destinazione candidata, escludendo l'hangar, e sono considerate contese le celle richieste da almeno due droni. Per ciascuna cella contesa $c$:
 \begin{itemize}
-    \item se la cella contesa è già occupata da un drone che vi rimane, gli altri droni che tentano di entrarvi sono bloccati e la collisione è penalizzata come nell'ambiente standard;
-    \item se la cella contesa è libera, passa un solo drone e gli altri attendono nella propria cella per un passo, senza penalità.
+    \item se $c$ coincide con la posizione corrente di uno dei contendenti, ossia è occupata da un drone che vi rimane, perché non si muove o perché è stato respinto in precedenza, gli altri contendenti sono riportati nella cella di partenza e ciascuna coppia è penalizzata con $-20$ e registrata come \emph{vertex collision}, come nell'ambiente standard;
+    \item se $c$ è libera, vi entra un solo drone, mentre gli altri restano nella propria cella per quel passo, senza penalità e senza che l'evento sia registrato come collisione.
 \end{itemize}
 
-Il vincitore è il drone che minimizza la coppia $(\Delta d_i, i)$, dove $\Delta d_i = d(c, h) - d(p_i, h)$ è la variazione della distanza di Manhattan dall'hangar $h$ che il drone $i$ otterrebbe entrando nella cella contesa $c$: ha la precedenza il drone che si avvicina all'hangar ($\Delta d = -1$) rispetto a quello che se ne allontana ($\Delta d = +1$) e, a parità, il drone con indice minore. Poiché un drone che attende può a sua volta liberare o occupare celle contese da altri, la procedura viene ripetuta finché rimangono contese, gestendo così i blocchi a cascata. L'hangar resta escluso dalle contese.
+Il criterio di precedenza è un ordinamento lessicografico. A ciascun contendente $i$ si associa la coppia $(\Delta d_i, i)$, con $\Delta d_i = d(c, h) - d(p_i, h)$, dove $d$ è la distanza di Manhattan, $h$ la posizione dell'hangar e $p_i$ la posizione corrente del drone; vince il drone con la coppia minima. Poiché ogni mossa cardinale modifica di un'unità una sola coordinata, $\Delta d_i \in \{-1, +1\}$: ha la precedenza il drone che, entrando in $c$, si avvicina all'hangar rispetto a quello che se ne allontana. La distanza di Manhattan non tiene conto degli ostacoli, per cui misura l'avvicinamento geometrico e non la lunghezza del percorso effettivamente percorribile. In caso di parità, cioè quando i contendenti si avvicinano o si allontanano entrambi, prevale il drone con indice minore. Si tratta di una convenzione arbitraria ma deterministica, che garantisce l'esistenza di un unico vincitore; il suo effetto collaterale è di favorire sistematicamente i droni con indice più basso nelle contese simmetriche.
+
+Un drone può entrare nella cella che un compagno libera nello stesso passo, purché quest'ultimo si sposti effettivamente. Se il compagno viene a sua volta trattenuto, la cella torna occupata e la nuova contesa è trattata all'iterazione successiva secondo il primo dei due casi. La procedura è quindi ripetuta finché non rimangono celle contese, gestendo così i blocchi a cascata. La terminazione è garantita: ogni iterazione che rileva almeno una contesa riporta almeno un drone nella propria cella di partenza, e un drone in tale condizione non viene più spostato, per cui le iterazioni sono al più $N$. L'hangar resta escluso dalle contese, in coerenza con la regola di coabitazione.
 
 \section{Mascheramento delle azioni non valide}
 \label{sec:mascheramento}
 
 Nel test dell'ambiente standard il $79,4\%$ dei droni non arrivati di MAPPO ($450$ su $567$) e l'$86,9\%$ di quelli di PPO ($265$ su $305$) rimane fermo nella stessa cella fino al termine dell'episodio. La causa è la selezione deterministica: quando l'azione più probabile punta fuori dalla griglia, contro una montagna o coincide con l'azione Fermo, il drone la ripete a ogni passo. Nel Caso 2b, ad esempio, i quattro droni di MAPPO scelgono Fermo per tutti i $100$ passi, ottenendo esattamente il \emph{reward} di riferimento di $-400$.
 
-Il mascheramento interviene prima della selezione. Dalla rete si estraggono i cinque \emph{logit} di ciascun drone e si pone a $-\infty$ il \emph{logit} delle azioni:
+Il mascheramento interviene prima della selezione dell'azione e non modifica la rete. Per ciascun drone non ancora atterrato si estraggono i cinque \emph{logit} e si pone a $-\infty$ il \emph{logit} delle azioni:
 \begin{itemize}
     \item Fermo, finché il drone non ha raggiunto l'hangar;
     \item che porterebbero fuori dalla griglia o dentro una montagna;
-    \item che porterebbero verso una cella nella quale il drone è stato bloccato da un altro drone al passo precedente, purché esistano alternative valide.
+    \item che porterebbero verso una cella nella quale il drone è stato bloccato da un altro drone al passo precedente, per una \emph{vertex collision} con un drone fermo o per una \emph{edge collision}, purché resti almeno un'altra azione di movimento valida.
 \end{itemize}
-\newpage
-Viene quindi scelta l'azione con il \emph{logit} più alto tra quelle rimaste, cioè la migliore alternativa valida secondo la \emph{policy} appresa. Se non resta alcuna azione valida il drone rimane fermo. Escludendo l'azione Fermo, l'attesa di un drone avviene soltanto per effetto della regola di precedenza.
+I droni già atterrati non sono sottoposti a selezione, poiché la loro posizione resta fissata sull'hangar.
 
+I vincoli dei primi due punti sono rigidi, mentre quello del terzo è condizionale e viene rilassato quando renderebbe non valide tutte le azioni di movimento rimaste. Se, applicati i vincoli rigidi, nessuna delle quattro azioni di movimento risulta valida, il drone esegue l'azione Fermo, che costituisce in tal caso l'unica alternativa ammissibile; la situazione può verificarsi soltanto per un drone chiuso su tutti i lati da bordi e montagne, ad esempio in un angolo della griglia delimitato da due ostacoli. Negli altri casi viene scelta l'azione con il \emph{logit} più alto tra quelle rimaste, cioè la migliore alternativa valida secondo la \emph{policy} appresa, che è poi sottoposta al meccanismo \emph{anti-livelock}. Escludendo l'azione Fermo, l'attesa di un drone in volo avviene soltanto per effetto della regola di precedenza o del blocco da parte di un compagno.
+\newpage
 \section{Meccanismo \emph{anti-livelock}}
 \label{sec:anti_livelock}
 
-Il restante $20,6\%$ dei droni non arrivati di MAPPO e il $13,1\%$ di quelli di PPO si muove continuamente senza progredire, tipicamente oscillando tra due celle. Nel Caso 1b, per esempio, il drone D0 di MAPPO raggiunge una cella adiacente all'hangar e poi oscilla per $96$ passi tra le celle $(4, 5)$ e $(4, 4)$, senza mai entrare nel bersaglio. Il meccanismo \emph{anti-livelock} opera dopo il mascheramento, per ciascun drone, secondo tre regole in ordine di priorità:
+Il restante $20,6\%$ dei droni non arrivati di MAPPO e il $13,1\%$ di quelli di PPO si muove continuamente senza progredire, tipicamente oscillando tra due celle. Nel Caso 1b, per esempio, il drone D0 di MAPPO raggiunge una cella adiacente all'hangar e poi oscilla per $96$ passi tra le celle $(4, 5)$ e $(4, 4)$, senza mai entrare nel bersaglio. Il meccanismo \emph{anti-livelock} opera dopo il mascheramento, per ciascun drone, e si basa su due informazioni locali: la cella precedente $p_i^{\text{prev}}$, cioè l'ultima cella da cui il drone si è effettivamente spostato, e il numero di visite $v_i(c)$ a ciascuna cella $c$ nel corso dell'episodio, inizializzato a $1$ per la cella di partenza e incrementato a ogni ingresso effettivo. Il conteggio è mantenuto separatamente per ciascun drone. Indicata con $a^*$ l'azione selezionata dopo il mascheramento e con $c(a)$ la cella di destinazione dell'azione $a$, le regole seguenti sono applicate in ordine di priorità, e la prima applicabile determina l'azione eseguita:
 \begin{enumerate}
-    \item se un'azione valida porta direttamente nell'hangar, viene eseguita;
-    \item se l'azione scelta riporterebbe il drone nella cella occupata al passo precedente (ciclo di periodo $2$), si sceglie tra le altre azioni valide quella che porta nella cella meno visitata nell'episodio, a parità di visite quella con il \emph{logit} più alto;
-    \item se il drone sta ripassando su celle già visitate (cella corrente visitata almeno due volte e cella di destinazione almeno una), si preferisce la cella valida meno visitata, per forzare l'aggiramento dell'ostacolo.
+    \item \textbf{Ingresso nell'hangar} -- se un'azione valida porta direttamente nell'hangar, viene eseguita, anche se diversa da $a^*$; poiché l'hangar occupa una sola cella, tale azione è unica;
+    \item \textbf{Ciclo di periodo $2$} -- il ciclo è riconosciuto quando $c(a^*) = p_i^{\text{prev}}$, cioè quando il drone tornerebbe nella cella appena lasciata; se esistono altre azioni valide che non riportano in $p_i^{\text{prev}}$, tra queste si sceglie quella che minimizza $v_i(c(a))$ e, a parità di visite, quella con il \emph{logit} più alto;
+    \item \textbf{Ciclo di periodo maggiore} -- il ripasso è riconosciuto quando $v_i(p_i) \geq 2$ e $v_i(c(a^*)) \geq 1$, cioè quando il drone si trova in una cella già visitata almeno due volte e si dirige verso una cella già visitata; tra le azioni valide che non riportano in $p_i^{\text{prev}}$ (oppure, se non ve ne sono, tra tutte le azioni valide) si individua il numero minimo di visite, e $a^*$ è sostituita soltanto se tale minimo è strettamente inferiore a $v_i(c(a^*))$, scegliendo a parità di visite l'azione con il \emph{logit} più alto.
 \end{enumerate}
-Il conteggio delle visite è mantenuto separatamente per ciascun drone nel corso dell'episodio.
+Se nessuna regola è applicabile, oppure se il drone dispone di una sola azione valida, viene eseguita $a^*$. Il criterio delle visite favorisce l'ingresso in celle poco esplorate e forza così l'aggiramento dell'ostacolo, mentre il \emph{logit} come criterio di parità preserva, tra alternative equivalenti, la preferenza espressa dalla \emph{policy}. Il meccanismo è euristico e non garantisce l'eliminazione di ogni ciclo, come mostrano i \emph{livelock} residui riportati nella Sezione~\ref{sec:validazione_statistica}.
 \newpage
 \section{Validazione su scenari critici}
 \label{sec:validazione_scenari}
@@ -1266,7 +1284,7 @@ L'episodio si conclude in $4$ passi con un \emph{reward} di $+393$, contro il fa
 \section{Validazione statistica}
 \label{sec:validazione_statistica}
 
-La validazione decisiva è il test su $300$ episodi per algoritmo ($100$ per ciascuno dei semi $42$, $123$ e $999$), con mappe generate, che confronta l'ambiente standard con l'ambiente dotato dello strato (Tabella~\ref{tab:8_3}, Figure~\ref{fig:8_3} e \ref{fig:8_4}).
+La validazione decisiva è il test su $300$ episodi per algoritmo ($100$ per ciascuno dei semi $42$, $123$ e $999$), con mappe generate, che confronta l'ambiente standard con l'ambiente dotato dello strato (Tabella~\ref{tab:8_3}, Figure~\ref{fig:8_3} e \ref{fig:8_4}). Per ciascun seme l'ambiente è reinizializzato con il seme stesso e i $100$ episodi sono generati in sequenza. Poiché il generatore pseudo-casuale interviene soltanto nella generazione delle mappe, l'ambiente standard e l'ambiente con lo strato, così come MAPPO e PPO, sono valutati sulle stesse $300$ mappe, e il confronto è quindi appaiato. Tale sequenza differisce da quella del \emph{benchmark} della Tabella~\ref{tab:7_1}, che prosegue la sequenza dell'addestramento, e coincide invece, per costruzione, con le prime mappe generate dal medesimo seme all'inizio dell'addestramento. I valori sono aggregati sui $300$ episodi, senza una stima della dispersione tra semi.
 
 \begin{table}[htbp]
     \centering
@@ -1275,17 +1293,23 @@ La validazione decisiva è il test su $300$ episodi per algoritmo ($100$ per cia
         \toprule
         \textbf{Metrica (300 episodi)} & \textbf{MAPPO standard} & \textbf{MAPPO con strato} & \textbf{PPO standard} & \textbf{PPO con strato} \\
         \midrule
+        \multicolumn{5}{l}{\emph{Esito}} \\
         Episodi completati                      & $64$ ($21,3\%$)  & $297$ ($99,0\%$)     & $141$ ($47,0\%$) & $300$ ($100,0\%$) \\
-        \emph{Vertex collision} totali          & $7.444$          & $2$                  & $6.002$          & $3$ \\
-        Interventi della regola di precedenza   & --               & $59$ (in 52 episodi) & --               & $52$ (in 49 episodi) \\
-        Interventi del mascheramento            & --               & $3.017$              & --               & $319$ \\
-        Interventi \emph{anti-livelock}         & --               & $1.916$              & --               & $132$ \\
-        Contesa ai lati dell'hangar persistente & $22$             & $0$                  & $15$             & $0$ \\
-        Varco di una cella persistente          & $29$             & $0$                  & $37$             & $0$ \\
+        Episodi non completati                  & $236$            & $3$ (\emph{livelock} residuo) & $159$   & $0$ \\
+        Episodi con contesa ai lati dell'hangar persistente & $22$ & $0$                  & $15$             & $0$ \\
+        Episodi con varco di una cella persistente & $29$          & $0$                  & $37$             & $0$ \\
+        \midrule
+        \multicolumn{5}{l}{\emph{Eventi registrati dall'ambiente}} \\
+        \emph{Vertex collision} registrate      & $7.444$          & $2$                  & $6.002$          & $3$ \\
+        \midrule
+        \multicolumn{5}{l}{\emph{Interventi dello strato}} \\
+        Droni trattenuti dalla regola di precedenza & --           & $59$ (in 52 episodi) & --               & $52$ (in 49 episodi) \\
+        Azioni corrette dal mascheramento       & --               & $3.017$              & --               & $319$ \\
+        Azioni corrette dall'\emph{anti-livelock} & --             & $1.916$              & --               & $132$ \\
         \bottomrule
     \end{tabular}%
     }
-    \caption{Test statistico dello strato di risoluzione dei conflitti a quattro droni (modelli a 4.000.000 di passi).}
+    \caption{Test statistico dello strato di risoluzione dei conflitti a quattro droni (modelli a 4.000.000 di passi; valori aggregati sui 300 episodi, con le stesse mappe per tutte le colonne). Le contese risolte dalla regola di precedenza non sono registrate come collisioni; le \emph{edge collision} e gli urti contro bordi e ostacoli non sono riportati.}
     \label{tab:8_3}
     \fonte
 \end{table}
@@ -1306,12 +1330,14 @@ La validazione decisiva è il test su $300$ episodi per algoritmo ($100$ per cia
     \fonte
 \end{figure}
 \newpage
-Con lo strato il tasso di successo passa dal $21,3\%$ al $99,0\%$ per MAPPO e dal $47,0\%$ al $100,0\%$ per PPO. I tre episodi falliti di MAPPO terminano ciascuno con un solo drone non arrivato, in movimento continuo senza progredire: un \emph{livelock} residuo che il meccanismo \emph{anti-livelock} non risolve. Le \emph{vertex collision} scendono da $7.444$ a $2$ per MAPPO e da $6.002$ a $3$ per PPO. Questa riduzione va interpretata: nell'ambiente standard gran parte degli scontri si ripete a ogni passo all'interno degli stessi stalli, mentre con lo strato le contese sulle celle libere sono risolte dalla regola di precedenza prima di diventare collisioni e non sono più conteggiate come tali. Restano solo i rari casi di un drone che tenta di entrare in una cella occupata da un compagno fermo.
+Con lo strato il tasso di successo passa dal $21,3\%$ al $99,0\%$ per MAPPO e dal $47,0\%$ al $100,0\%$ per PPO. I tre episodi falliti di MAPPO terminano ciascuno con un solo drone non arrivato, in movimento continuo senza progredire: un \emph{livelock} residuo che il meccanismo \emph{anti-livelock} non risolve. L'andamento delle collisioni richiede una lettura distinta da quella del tasso di successo. Le \emph{vertex collision} registrate scendono da $7.444$ a $2$ per MAPPO e da $6.002$ a $3$ per PPO, ma questa riduzione non costituisce una misura indipendente di maggiore sicurezza, per due ragioni. In primo luogo, il criterio di registrazione cambia tra le due condizioni: con lo strato una contesa su una cella libera è risolta dalla regola di precedenza prima dell'aggiornamento delle posizioni e non viene conteggiata, mentre nell'ambiente standard la stessa situazione produce una collisione. Le collisioni evitate corrispondono quindi, in larga parte, ai conflitti intercettati dallo strato ($59$ e $52$ droni trattenuti dalla precedenza) e alle mosse corrette a monte dal mascheramento e dall'\emph{anti-livelock}. In secondo luogo, nell'ambiente standard gran parte degli scontri si ripete a ogni passo all'interno degli stessi stalli, per cui il conteggio totale riflette soprattutto la durata degli stalli e non il numero di situazioni di conflitto distinte. Analogamente, gli urti contro bordi e ostacoli sono impediti per costruzione dal mascheramento, e la loro scomparsa non è un risultato sperimentale. Le collisioni residue corrispondono ai rari casi in cui un drone tenta di entrare in una cella occupata da un compagno che vi rimane, situazione che la regola di precedenza non arbitra.
 
-La frequenza degli interventi conferma la diagnosi delle cause di fallimento. Il mascheramento interviene circa dieci volte più spesso per MAPPO ($3.017$ contro $319$) e l'\emph{anti-livelock} circa quindici volte più spesso ($1.916$ contro $132$): le \emph{policy} di MAPPO puntano più spesso verso mosse non valide o in ciclo. La regola di precedenza interviene invece raramente e in misura simile per i due algoritmi (in $52$ e $49$ episodi su $300$). I tassi di successo dell'ambiente standard ($21,3\%$ e $47,0\%$) differiscono da quelli del \emph{benchmark} della Tabella~\ref{tab:7_1} ($18,0\%$ e $41,0\%$) perché la sequenza di episodi è diversa.
+Il risultato va quindi letto congiuntamente a tre elementi: il numero di interventi dello strato, che misura quante volte le scelte delle \emph{policy} sono state corrette; il numero di episodi in cui la precedenza è intervenuta, che misura la frequenza dei conflitti intercettati; i casi residui, ossia i tre episodi di \emph{livelock} di MAPPO, a fronte dell'assenza di stalli persistenti nelle due categorie analizzate. In questa lettura il dato principale è che le \emph{policy}, affiancate dallo strato, completano la missione in quasi tutti gli episodi, mentre il comportamento delle sole \emph{policy} in assenza dello strato resta quello misurato nell'ambiente standard.
+
+La frequenza degli interventi conferma la diagnosi delle cause di fallimento. Il mascheramento interviene circa dieci volte più spesso per MAPPO ($3.017$ contro $319$) e l'\emph{anti-livelock} circa quindici volte più spesso ($1.916$ contro $132$): le \emph{policy} di MAPPO puntano più spesso verso mosse non valide o in ciclo. La regola di precedenza interviene invece raramente e in misura simile per i due algoritmi (in $52$ e $49$ episodi su $300$), il che indica che le contese simultanee su una cella libera sono relativamente infrequenti rispetto alle mosse non valide e ai cicli. I tassi di successo dell'ambiente standard ($21,3\%$ e $47,0\%$) differiscono da quelli del \emph{benchmark} della Tabella~\ref{tab:7_1} ($18,0\%$ e $41,0\%$) perché la sequenza di episodi è diversa: le differenze sono compatibili con l'errore campionario, e i valori vanno confrontati soltanto all'interno della stessa analisi.
 
 \subsection{Limiti della validazione}
-Gli scenari critici sono stati costruiti a mano, il test usa gli stessi semi dell'addestramento e i tre meccanismi sono stati valutati sempre insieme.
+Gli scenari critici sono stati costruiti a mano, dopo l'osservazione dei fallimenti. Il test statistico usa gli stessi semi dell'addestramento e, per costruzione, una sequenza di mappe che coincide con le prime generate in addestramento, per cui non fornisce una stima della generalizzazione. I tre meccanismi sono stati valutati sempre insieme, e il contributo di ciascuno non è isolato. Infine, i valori sono aggregati sui $300$ episodi, senza una stima della variabilità tra i modelli addestrati con semi diversi.
 
 % =============================================================================
 % CAPITOLO 9 - DISCUSSIONE
@@ -1328,7 +1354,7 @@ Il capitolo interpreta i risultati, li colloca rispetto alla letteratura e discu
 Il tasso di successo di squadra diminuisce rapidamente con il numero di droni per entrambi gli algoritmi, con il calo più marcato tra due e tre droni. Il successo richiede che tutti i droni raggiungano l'hangar, per cui la probabilità di fallimento cresce con il numero di agenti anche a parità di abilità individuale. A ciò si aggiunge la contesa per l'accesso all'unico hangar, che con quattro droni impone un ordine di arrivo.
 
 \subsection{Confronto tra MAPPO e PPO}
-I risultati non indicano una superiorità generale di nessuno dei due approcci. MAPPO è moderatamente avanti con uno e due droni, PPO con tre e quattro. Le differenze a $1.000.000$ di passi sono dell'ordine della variabilità tra i semi, mentre a $4.000.000$ di passi il vantaggio di PPO a quattro droni ($41,0\%$ contro $18,0\%$) è netto e concorde in tutti i semi. Con lo strato di risoluzione dei conflitti la distanza si annulla quasi del tutto ($99,0\%$ contro $100,0\%$). Ne segue che a quattro droni gran parte del divario tra i due algoritmi non dipende dalla capacità di navigazione appresa, ma dal modo in cui le \emph{policy} gestiscono i conflitti in esecuzione.
+I risultati non indicano una superiorità generale di nessuno dei due approcci. MAPPO è moderatamente avanti con uno e due droni, PPO con tre e quattro. Le differenze a $1.000.000$ di passi sono dell'ordine della variabilità tra i semi, mentre a $4.000.000$ di passi il vantaggio di PPO a quattro droni ($41,0\%$ contro $18,0\%$) è netto e concorde in tutti i semi. In entrambi i casi, tuttavia, le differenze riflettono l'insieme delle differenze tra le due configurazioni, che riguardano anche implementazione, architettura e iperparametri, e non isolano l'effetto del paradigma CTDE o del \emph{parameter sharing}. Con lo strato di risoluzione dei conflitti la distanza si annulla quasi del tutto ($99,0\%$ contro $100,0\%$). Ne segue che a quattro droni gran parte del divario tra i due algoritmi non dipende dalla capacità di navigazione appresa, ma dal modo in cui le \emph{policy} gestiscono i conflitti in esecuzione.
 
 \subsection{Addestramento e valutazione}
 Il risultato più ricorrente è il divario tra metriche di addestramento, ottenute con \emph{policy} stocastica, e metriche di valutazione deterministica. La valutazione deterministica, scelta per garantire riproducibilità e confrontabilità, misura quindi una proprietà diversa dalla qualità media della \emph{policy} stocastica.
@@ -1337,7 +1363,7 @@ Il risultato più ricorrente è il divario tra metriche di addestramento, ottenu
 L'entropia delle \emph{policy} di MAPPO cala molto più di quella di PPO, nonostante il bonus di entropia sia presente solo in MAPPO ($0,01$ contro $0,0$). I dati non permettono di isolare la causa, ma suggeriscono alcune ipotesi da verificare: la condivisione dei parametri, per cui l'\emph{actor} riceve $N$ campioni per passo con il medesimo \emph{advantage} di squadra, la dimensione maggiore delle reti e il \emph{learning rate} più elevato del \emph{critic}, che accelera la stima dell'\emph{advantage}.
 
 \subsection{Strato di risoluzione dei conflitti}
-Uno strato semplice, composto da regole deterministiche e senza riaddestramento, porta il successo vicino al $100\%$. Le \emph{policy} apprese contengono quindi già una buona capacità di navigazione, e ciò che manca è soprattutto la capacità di risolvere le situazioni di stallo. Questo suggerisce una divisione dei compiti tra apprendimento e regole: le \emph{policy} si occupano della navigazione verso l'obiettivo, mentre la sicurezza e la precedenza sono affidate a uno strato esplicito, verificabile e prevedibile.
+Uno strato semplice, composto da regole deterministiche e senza riaddestramento, porta il successo vicino al $100\%$. Le \emph{policy} apprese contengono quindi già una buona capacità di navigazione, e ciò che manca è soprattutto la capacità di risolvere le situazioni di stallo. Questo suggerisce una divisione dei compiti tra apprendimento e regole: le \emph{policy} si occupano della navigazione verso l'obiettivo, mentre la gestione delle contese e la precedenza sono affidate a uno strato esplicito, verificabile e prevedibile. L'aumento del tasso di successo non va tuttavia interpretato come una dimostrazione indipendente di maggiore sicurezza, poiché una parte delle collisioni evitate è intercettata dallo strato stesso e non più registrata come tale (Sezione~\ref{sec:validazione_statistica}).
 
 \section{Confronto con la letteratura}
 \label{sec:confronto_letteratura}
@@ -1360,25 +1386,27 @@ I principali aspetti relativi alla validità interna riguardano:
 Sul piano della validità statistica si segnalano i seguenti elementi:
 \begin{itemize}
     \item \textbf{Numero di semi} -- le conclusioni si basano su tre semi, per cui le deviazioni standard misurano la dispersione tra tre modelli e sono stime poco precise, tanto che a $1.000.000$ di passi le differenze tra gli algoritmi non risultano significative con questo campione;
+    \item \textbf{Variabilità tra episodi e tra addestramenti} -- le deviazioni standard riportate descrivono la dispersione tra modelli addestrati con semi diversi, mentre l'errore binomiale sui $100$ o $300$ episodi descrive la precisione della stima per un dato modello; le due grandezze non vanno confuse, e la prima, stimata su soli tre modelli, è la più rilevante per giudicare la robustezza dei confronti tra algoritmi;
     \item \textbf{Sequenze di episodi diverse} -- \emph{benchmark}, analisi della ricompensa e test dello strato usano sequenze di episodi diverse, per cui i tassi di successo dell'ambiente standard variano tra le analisi (ad esempio $18,0\%$, $16,7\%$ e $21,3\%$ per MAPPO a quattro droni), con variazioni coerenti con l'errore campionario che impongono di confrontare i valori solo all'interno della stessa analisi.
 \end{itemize}
-\newpage
+
 \subsection{Validità concettuale}
-Per quanto riguarda la validità concettualeF occorre considerare:
+Per quanto riguarda la validità concettuale occorre considerare:
 \begin{itemize}
     \item \textbf{Metriche} -- il \emph{reward} medio è dominato dagli episodi falliti e i passi medi includono gli episodi troncati, per cui entrambe le metriche vanno lette insieme al tasso di successo;
-    \item \textbf{Conteggio delle collisioni} -- con lo strato le contese risolte dalla precedenza non sono conteggiate come collisioni, per cui la riduzione delle \emph{vertex collision} è in parte una conseguenza della definizione;
+    \item \textbf{Conteggio delle collisioni} -- con lo strato le contese risolte dalla precedenza non sono conteggiate come collisioni e gli urti contro bordi e ostacoli sono impediti dal mascheramento, per cui la riduzione delle collisioni registrate è in larga parte una conseguenza della definizione e va letta insieme al numero di interventi dello strato e ai casi residui;
     \item \textbf{Valutazione deterministica} -- esaminare la \emph{policy} deterministica mira a misurare una proprietà ben definita della flotta, mentre condurre una valutazione stocastica fornirebbe riscontri diversi e plausibilmente più coerenti con le metriche di addestramento.
 \end{itemize}
 
 \subsection{Validità esterna}
 I limiti di generalizzabilità esterna comprendono:
 \begin{itemize}
-    \item \textbf{Astrazione} -- l'ambiente è una griglia discreta $10 \times 10$, senza dinamica continua, quota, vento, rumore di sensori né vincoli di comunicazione, per cui i risultati non sono direttamente trasferibili al volo reale;
+    \item \textbf{Astrazione} -- l'ambiente è una griglia discreta $10 \times 10$, senza dinamica continua, quota, vento, rumore di sensori né vincoli di comunicazione, e con le posizioni dei compagni assunte note a ciascun drone in modo esatto e sincrono, per cui i risultati non sono direttamente trasferibili al volo reale;
     \item \textbf{Configurazione del problema} -- le flotte arrivano a quattro droni, gli ostacoli sono statici e la destinazione è unica e comune, per cui non è verificato come le conclusioni si estendano a flotte più numerose o a destinazioni multiple;
-    \item \textbf{Generalizzazione} -- i test usano gli stessi semi dell'addestramento, con sequenze di mappe nuove ma generate dallo stesso processo, senza misurare la generalizzazione a semi non visti né a mappe con distribuzione diversa;
+    \item \textbf{Generalizzazione} -- i semi di valutazione coincidono con quelli di addestramento: le mappe del \emph{benchmark} proseguono la sequenza dell'addestramento e quelle del test dello strato coincidono con le prime generate in addestramento, per cui non è misurata la generalizzazione a semi non visti né a mappe con distribuzione diversa;
     \item \textbf{Scenari critici} -- i cinque scenari sono stati costruiti dopo aver osservato i fallimenti e non costituiscono un campione rappresentativo;
-    \item \textbf{Decentralizzazione} -- la regola di precedenza richiede un'arbitrazione centrale o una comunicazione tra i droni, per cui il sistema non è a esecuzione puramente decentralizzata.
+    \newpage
+    \item \textbf{Decentralizzazione} -- le \emph{policy} decidono in modo decentralizzato, ma presuppongono la condivisione delle posizioni di tutti i droni; la regola di precedenza richiede inoltre la conoscenza delle mosse previste nello stesso passo, e quindi un'arbitrazione centrale o uno scambio esplicito delle intenzioni, per cui il sistema completo non è a esecuzione puramente decentralizzata.
 \end{itemize}
 
 % =============================================================================
@@ -1390,15 +1418,15 @@ I limiti di generalizzabilità esterna comprendono:
 \section{Conclusioni}
 \label{sec:conclusioni}
 
-La tesi ha affrontato la navigazione cooperativa di una flotta di UAV verso un hangar comune, su una griglia con ostacoli generati proceduralmente, mediante \emph{Multi-Agent Reinforcement Learning} (MARL). È stato sviluppato un ambiente parametrico compatibile con Gymnasium, con rilevamento delle \emph{vertex collision} ed \emph{edge collision} e ricompensa di squadra, formalizzato come processo decisionale di Markov multi-agente a osservabilità completa. Su di esso sono stati confrontati MAPPO, algoritmo esistente \parencite{yu2022} di cui è stata realizzata un'implementazione propria in PyTorch, con parametri condivisi e osservazioni ego-centriche, e un PPO centralizzato basato su Stable-Baselines3, con un protocollo di valutazione su $100$ episodi per ciascuno di tre semi.
+La tesi ha affrontato la navigazione cooperativa di una flotta di UAV verso un hangar comune, su una griglia con ostacoli generati proceduralmente, mediante \emph{Multi-Agent Reinforcement Learning} (MARL). È stato sviluppato un ambiente parametrico compatibile con Gymnasium, con rilevamento delle \emph{vertex collision} ed \emph{edge collision} e ricompensa di squadra, formalizzato come processo decisionale di Markov multi-agente a osservabilità completa, nel quale le posizioni di tutti i droni sono assunte note a ciascun agente. Su di esso sono stati confrontati MAPPO, algoritmo esistente \parencite{yu2022} di cui è stata realizzata un'implementazione propria in PyTorch, con parametri condivisi e osservazioni ego-centriche, e un PPO centralizzato basato su Stable-Baselines3, con un protocollo di valutazione su $100$ episodi per ciascuno di tre semi.
 
 I risultati principali sono quattro:
 \begin{enumerate}
     \item \textbf{Scalabilità} -- il tasso di successo di squadra diminuisce rapidamente con la dimensione della flotta per entrambi gli algoritmi, dall'$80\%$ circa con un drone al $23$--$26\%$ con quattro droni a $1.000.000$ di passi;
-    \item \textbf{Confronto tra gli algoritmi} -- MAPPO è moderatamente avanti con uno e due droni e PPO con tre e quattro, con differenze dell'ordine della variabilità tra i semi, mentre aumentando il budget a $4.000.000$ di passi MAPPO non migliora ($18,0\%$) e PPO sale al $41,0\%$;
+    \item \textbf{Confronto tra gli algoritmi} -- MAPPO è moderatamente avanti con uno e due droni e PPO con tre e quattro, con differenze dell'ordine della variabilità tra i semi, mentre aumentando il budget a $4.000.000$ di passi MAPPO non migliora ($18,0\%$) e PPO sale al $41,0\%$; poiché le due configurazioni differiscono anche per implementazione, architettura e iperparametri, il confronto non isola l'effetto del paradigma CTDE o del \emph{parameter sharing};
     \newpage
     \item \textbf{Diagnosi} -- il \emph{reward} fortemente negativo a quattro droni è dovuto alle collisioni tra droni, più frequenti per MAPPO, e contro gli ostacoli, più frequenti per PPO, dove il degrado di MAPPO è associato a una forte contrazione dell'entropia e a un problema derivante dalle coordinazioni simmetriche, per cui droni con gli stessi pesi in configurazioni equivalenti prendono la stessa decisione e restano bloccati, mentre le metriche di addestramento stocastiche sono sistematicamente migliori di quelle di valutazione deterministica;
-    \item \textbf{Strato di risoluzione dei conflitti} -- uno strato composto da regola di precedenza, mascheramento delle azioni non valide e meccanismo \emph{anti-livelock}, applicato in esecuzione senza riaddestramento, porta il tasso di successo a quattro droni dal $21,3\%$ al $99,0\%$ per MAPPO e dal $47,0\%$ al $100,0\%$ per PPO, eliminando gli stalli persistenti.
+    \item \textbf{Strato di risoluzione dei conflitti} -- uno strato composto da regola di precedenza, mascheramento delle azioni non valide e meccanismo \emph{anti-livelock}, applicato in esecuzione senza riaddestramento, porta il tasso di successo a quattro droni dal $21,3\%$ al $99,0\%$ per MAPPO e dal $47,0\%$ al $100,0\%$ per PPO, risolvendo gli stalli persistenti delle categorie analizzate, con tre episodi residui di \emph{livelock} per MAPPO; la contestuale riduzione delle collisioni registrate riflette in larga parte i conflitti intercettati dallo strato e va letta insieme al numero dei suoi interventi.
 \end{enumerate}
 
 Nel complesso, le \emph{policy} apprese possiedono una buona capacità di navigazione, mentre la risoluzione dei conflitti tra agenti omogenei in prossimità di una risorsa contesa rimane il punto critico. In questo contesto la combinazione di \emph{policy} apprese e regole esplicite di coordinamento si è dimostrata più efficace del solo apprendimento, pagando però il prezzo di una regola di precedenza vincolata a un coordinatore centrale.
