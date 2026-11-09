@@ -396,7 +396,7 @@ Gli elementi del modello sono riassunti nella Tabella~\ref{tab:3_4}.
         Stato iniziale     & estratto a caso a ogni episodio (posizioni distinte), con seme fissato per la riproducibilità \\
         Ricompensa $r$     & ricompensa di squadra $R_t$ della Sezione~\ref{sec:regole_ricompensa} \\
         Orizzonte          & $T_{\max} = 100$ passi, terminazione quando tutti i droni sono atterrati \\
-        Osservazione $o_i$ & $o_i = \varphi_i(s)$: riorganizzazione ego-centrica dello stato, che include le posizioni dei compagni, assunte note a ciascun agente (Sezione~\ref{subsec:funzione_osservazione}) \\
+        Osservazione $o_i$ & $o_i = \varphi_i(s)$: riorganizzazione ego-centrica dello stato, che include le posizioni dei compagni, assunte note a ciascun agente \\
         \bottomrule
     \end{tabularx}
     \caption{Elementi del modello dell'ambiente.}
@@ -520,9 +520,9 @@ Il controllo è inoltre centralizzato anche in esecuzione: l'unica rete richiede
         Normalizzazione degli \emph{advantage}      & attiva \\
         \bottomrule
     \end{tabularx}
-    \caption{Iperparametri della linea di base PPO (valori predefiniti di Stable-Baselines3 v2.9.0).}
+    \caption{Iperparametri della linea di base PPO (valori predefiniti di Stable-Baselines3).}
     \label{tab:4_2}
-    \fonte[documentazione di Stable-Baselines3 v2.9.0 \parencite{raffin2021}]
+    \fonte[documentazione di Stable-Baselines3 \parencite{raffin2021}]
 \end{table}
 
 Poiché il \emph{rollout buffer} ha dimensione $\texttt{n\_steps} = 2048$, il numero di passi effettivamente eseguiti da Stable-Baselines3 è il primo multiplo di $2048$ non inferiore al budget richiesto (ad esempio $51.200$ passi per un budget di $50.000$ e $501.760$ per $500.000$).
@@ -542,8 +542,8 @@ La Tabella~\ref{tab:4_3} riassume le differenze tra le due configurazioni.
         \emph{Policy}                      & fattorizzata, $5 \cdot N$ \emph{logit}, un'unica rete per tutti i droni & \emph{actor} condiviso, $5$ \emph{logit} per drone \\
         \emph{Parameter sharing}           & no & sì \\
         Esecuzione                         & centralizzata (stato globale e controllore unico) & decentralizzata (\emph{actor} applicato all'osservazione propria, che include le posizioni dei compagni) \\
-        Implementazione                    & Stable-Baselines3 v2.9.0 & propria in PyTorch \\
-        Architettura                       & 2 strati da 64 unità, Tanh & 2 strati da 128 unità, Tanh \\
+        Implementazione                    & Stable-Baselines3 & propria in PyTorch \\
+        Architettura                       & 2 strati da 64 unità & 2 strati da 128 unità \\
         Passi di ambiente per aggiornamento & $2048$ & $1024$ \\
         Campioni dell'\emph{actor} per aggiornamento & $2048$, indipendenti da $N$ & $1024 \cdot N$ \\
         \emph{Learning rate}               & $3 \cdot 10^{-4}$ & $3 \cdot 10^{-4}$ (\emph{actor}), $1 \cdot 10^{-3}$ (\emph{critic}) \\
@@ -705,7 +705,7 @@ Il tracciamento delle risorse è affidato a un modulo di monitoraggio (\texttt{R
 \chapter{Risultati I: \emph{baseline} e scalabilità da 1 a 4 UAV}
 \label{chap:risultati_1}
 
-Il capitolo riporta i risultati del confronto tra MAPPO e PPO centralizzato al variare della dimensione della flotta, il loro costo computazionale e l'analisi delle curve di addestramento che ha guidato la scelta dei budget. Tutti i valori sono medie e deviazioni standard campionarie sui tre semi ($42$, $123$, $999$), con $100$ episodi di valutazione deterministica per seme, e descrivono quindi la variabilità tra addestramenti (Sezione~\ref{sec:protocollo_valutazione}).
+Il capitolo riporta i risultati del confronto tra MAPPO e PPO centralizzato al variare della dimensione della flotta, il loro costo computazionale e l'analisi delle curve di addestramento che ha guidato la scelta dei budget. Tutti i valori sono medie e deviazioni standard campionarie sui tre semi ($42$, $123$, $999$), con $100$ episodi di valutazione deterministica per seme, e descrivono quindi la variabilità tra addestramenti.
 
 \section{Prestazioni da uno a quattro droni}
 \label{sec:prestazioni_1_4}
@@ -763,7 +763,7 @@ La Tabella~\ref{tab:6_1} riporta le prestazioni di valutazione e le Figure~\ref{
 Per entrambi gli algoritmi il tasso di successo diminuisce in modo costante all'aumentare dei droni: da $79,7\%$ a $22,7\%$ per MAPPO e da $76,7\%$ a $26,3\%$ per PPO. Il calo più marcato si registra tra due e tre droni (circa $34$ punti percentuali per MAPPO e $25$ per PPO). Un risultato di squadra richiede che tutti gli $N$ droni raggiungano l'hangar, per cui ogni drone aggiuntivo introduce nuove occasioni di conflitto in prossimità del bersaglio.
 
 \subsection{Confronto tra gli algoritmi}
-MAPPO ottiene un tasso di successo più elevato con uno e due droni ($79,7\%$ contro $76,7\%$ e $69,0\%$ contro $64,7\%$) e un \emph{reward} medio superiore ($-115,6$ contro $-165,3$ e $-267,0$ contro $-330,7$). Con tre e quattro droni l'ordine si inverte: PPO ottiene il $39,3\%$ contro il $34,7\%$ di MAPPO e il $26,3\%$ contro il $22,7\%$, con un \emph{reward} migliore. Le differenze vanno però lette con cautela. Gli scarti (da $3$ a $4,7$ punti) sono dello stesso ordine della dispersione tra i semi e dell'errore standard sulla differenza, circa $4$ punti su $300$ episodi, e la loro direzione non è concorde in tutti i semi (Figura~\ref{fig:6_4}). Con soli tre semi, quindi, le differenze non sono significative. Esse, inoltre, non sono attribuibili al solo paradigma CTDE o al \emph{parameter sharing}, poiché le due configurazioni differiscono anche per implementazione, architettura e iperparametri (Sezione~\ref{sec:confronto_configurazioni}).
+MAPPO ottiene un tasso di successo più elevato con uno e due droni ($79,7\%$ contro $76,7\%$ e $69,0\%$ contro $64,7\%$) e un \emph{reward} medio superiore ($-115,6$ contro $-165,3$ e $-267,0$ contro $-330,7$). Con tre e quattro droni l'ordine si inverte: PPO ottiene il $39,3\%$ contro il $34,7\%$ di MAPPO e il $26,3\%$ contro il $22,7\%$, con un \emph{reward} migliore. Le differenze vanno però lette con cautela. Gli scarti (da $3$ a $4,7$ punti) sono dello stesso ordine della dispersione tra i semi e dell'errore standard sulla differenza, circa $4$ punti su $300$ episodi, e la loro direzione non è concorde in tutti i semi (Figura~\ref{fig:6_4}). Con soli tre semi, quindi, le differenze non sono significative. Esse, inoltre, non sono attribuibili al solo paradigma CTDE o al \emph{parameter sharing}, poiché le due configurazioni differiscono anche per implementazione, architettura e iperparametri.
 
 \begin{figure}[htbp]
     \centering
@@ -1208,7 +1208,7 @@ Il restante $20,6\%$ dei droni non arrivati di MAPPO e il $13,1\%$ di quelli di 
     \item \textbf{Ciclo di periodo $2$} -- il ciclo è riconosciuto quando $c(a^*) = p_i^{\text{prev}}$, cioè quando il drone tornerebbe nella cella appena lasciata; se esistono altre azioni valide che non riportano in $p_i^{\text{prev}}$, tra queste si sceglie quella che minimizza $v_i(c(a))$ e, a parità di visite, quella con il \emph{logit} più alto;
     \item \textbf{Ciclo di periodo maggiore} -- il ripasso è riconosciuto quando $v_i(p_i) \geq 2$ e $v_i(c(a^*)) \geq 1$, cioè quando il drone si trova in una cella già visitata almeno due volte e si dirige verso una cella già visitata; tra le azioni valide che non riportano in $p_i^{\text{prev}}$ (oppure, se non ve ne sono, tra tutte le azioni valide) si individua il numero minimo di visite, e $a^*$ è sostituita soltanto se tale minimo è strettamente inferiore a $v_i(c(a^*))$, scegliendo a parità di visite l'azione con il \emph{logit} più alto.
 \end{enumerate}
-Se nessuna regola è applicabile, oppure se il drone dispone di una sola azione valida, viene eseguita $a^*$. Il criterio delle visite favorisce l'ingresso in celle poco esplorate e forza così l'aggiramento dell'ostacolo, mentre il \emph{logit} come criterio di parità preserva, tra alternative equivalenti, la preferenza espressa dalla \emph{policy}. Il meccanismo è euristico e non garantisce l'eliminazione di ogni ciclo, come mostrano i \emph{livelock} residui riportati nella Sezione~\ref{sec:validazione_statistica}.
+Se nessuna regola è applicabile, oppure se il drone dispone di una sola azione valida, viene eseguita $a^*$. Il criterio delle visite favorisce l'ingresso in celle poco esplorate e forza così l'aggiramento dell'ostacolo, mentre il \emph{logit} come criterio di parità preserva, tra alternative equivalenti, la preferenza espressa dalla \emph{policy}. Il meccanismo è euristico e non garantisce l'eliminazione di ogni ciclo, come mostrano i \emph{livelock} residui.
 \newpage
 \section{Validazione su scenari critici}
 \label{sec:validazione_scenari}
@@ -1332,7 +1332,7 @@ La validazione decisiva è il test su $300$ episodi per algoritmo ($100$ per cia
 \newpage
 Con lo strato il tasso di successo passa dal $21,3\%$ al $99,0\%$ per MAPPO e dal $47,0\%$ al $100,0\%$ per PPO. I tre episodi falliti di MAPPO terminano ciascuno con un solo drone non arrivato, in movimento continuo senza progredire: un \emph{livelock} residuo che il meccanismo \emph{anti-livelock} non risolve. L'andamento delle collisioni richiede una lettura distinta da quella del tasso di successo. Le \emph{vertex collision} registrate scendono da $7.444$ a $2$ per MAPPO e da $6.002$ a $3$ per PPO, ma questa riduzione non costituisce una misura indipendente di maggiore sicurezza, per due ragioni. In primo luogo, il criterio di registrazione cambia tra le due condizioni: con lo strato una contesa su una cella libera è risolta dalla regola di precedenza prima dell'aggiornamento delle posizioni e non viene conteggiata, mentre nell'ambiente standard la stessa situazione produce una collisione. Le collisioni evitate corrispondono quindi, in larga parte, ai conflitti intercettati dallo strato ($59$ e $52$ droni trattenuti dalla precedenza) e alle mosse corrette a monte dal mascheramento e dall'\emph{anti-livelock}. In secondo luogo, nell'ambiente standard gran parte degli scontri si ripete a ogni passo all'interno degli stessi stalli, per cui il conteggio totale riflette soprattutto la durata degli stalli e non il numero di situazioni di conflitto distinte. Analogamente, gli urti contro bordi e ostacoli sono impediti per costruzione dal mascheramento, e la loro scomparsa non è un risultato sperimentale. Le collisioni residue corrispondono ai rari casi in cui un drone tenta di entrare in una cella occupata da un compagno che vi rimane, situazione che la regola di precedenza non arbitra.
 
-Il risultato va quindi letto congiuntamente a tre elementi: il numero di interventi dello strato, che misura quante volte le scelte delle \emph{policy} sono state corrette; il numero di episodi in cui la precedenza è intervenuta, che misura la frequenza dei conflitti intercettati; i casi residui, ossia i tre episodi di \emph{livelock} di MAPPO, a fronte dell'assenza di stalli persistenti nelle due categorie analizzate. In questa lettura il dato principale è che le \emph{policy}, affiancate dallo strato, completano la missione in quasi tutti gli episodi, mentre il comportamento delle sole \emph{policy} in assenza dello strato resta quello misurato nell'ambiente standard.
+Il risultato va quindi letto congiuntamente a tre elementi: il numero di interventi dello strato, che misura quante volte le scelte delle \emph{policy} sono state corrette; il numero di episodi in cui la precedenza è intervenuta, che misura la frequenza dei conflitti intercettati; i casi residui, ossia i tre episodi di \emph{livelock} di MAPPO, a fronte dell'assenza di stalli persistenti nelle due categorie analizzate. Da questa analisi emerge principalmente come l'integrazione del layer consenta alle policy di completare la missione nella quasi totalità degli episodi; al contrario, in assenza di tale strato, le loro prestazioni rimangono analoghe a quelle rilevate nell'ambiente standard.
 
 La frequenza degli interventi conferma la diagnosi delle cause di fallimento. Il mascheramento interviene circa dieci volte più spesso per MAPPO ($3.017$ contro $319$) e l'\emph{anti-livelock} circa quindici volte più spesso ($1.916$ contro $132$): le \emph{policy} di MAPPO puntano più spesso verso mosse non valide o in ciclo. La regola di precedenza interviene invece raramente e in misura simile per i due algoritmi (in $52$ e $49$ episodi su $300$), il che indica che le contese simultanee su una cella libera sono relativamente infrequenti rispetto alle mosse non valide e ai cicli. I tassi di successo dell'ambiente standard ($21,3\%$ e $47,0\%$) differiscono da quelli del \emph{benchmark} della Tabella~\ref{tab:7_1} ($18,0\%$ e $41,0\%$) perché la sequenza di episodi è diversa: le differenze sono compatibili con l'errore campionario, e i valori vanno confrontati soltanto all'interno della stessa analisi.
 
@@ -1363,7 +1363,7 @@ Il risultato più ricorrente è il divario tra metriche di addestramento, ottenu
 L'entropia delle \emph{policy} di MAPPO cala molto più di quella di PPO, nonostante il bonus di entropia sia presente solo in MAPPO ($0,01$ contro $0,0$). I dati non permettono di isolare la causa, ma suggeriscono alcune ipotesi da verificare: la condivisione dei parametri, per cui l'\emph{actor} riceve $N$ campioni per passo con il medesimo \emph{advantage} di squadra, la dimensione maggiore delle reti e il \emph{learning rate} più elevato del \emph{critic}, che accelera la stima dell'\emph{advantage}.
 
 \subsection{Strato di risoluzione dei conflitti}
-Uno strato semplice, composto da regole deterministiche e senza riaddestramento, porta il successo vicino al $100\%$. Le \emph{policy} apprese contengono quindi già una buona capacità di navigazione, e ciò che manca è soprattutto la capacità di risolvere le situazioni di stallo. Questo suggerisce una divisione dei compiti tra apprendimento e regole: le \emph{policy} si occupano della navigazione verso l'obiettivo, mentre la gestione delle contese e la precedenza sono affidate a uno strato esplicito, verificabile e prevedibile. L'aumento del tasso di successo non va tuttavia interpretato come una dimostrazione indipendente di maggiore sicurezza, poiché una parte delle collisioni evitate è intercettata dallo strato stesso e non più registrata come tale (Sezione~\ref{sec:validazione_statistica}).
+Uno strato semplice, composto da regole deterministiche e senza riaddestramento, porta il successo vicino al $100\%$. Le \emph{policy} apprese contengono quindi già una buona capacità di navigazione, e ciò che manca è soprattutto la capacità di risolvere le situazioni di stallo. Questo suggerisce una divisione dei compiti tra apprendimento e regole: le \emph{policy} si occupano della navigazione verso l'obiettivo, mentre la gestione delle contese e la precedenza sono affidate a uno strato esplicito, verificabile e prevedibile. L'aumento del tasso di successo non va tuttavia interpretato come una dimostrazione indipendente di maggiore sicurezza, poiché una parte delle collisioni evitate è intercettata dallo strato stesso e non più registrata come tale.
 
 \section{Confronto con la letteratura}
 \label{sec:confronto_letteratura}
