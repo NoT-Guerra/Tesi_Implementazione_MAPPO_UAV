@@ -38,6 +38,9 @@
 % Macro per la fonte in calce a tabelle e figure
 \newcommand{\fonte}[1][elaborazione propria]{\par\vspace{3pt}{\footnotesize\emph{Fonte: #1.}}}
 
+% Macro per inserire una pagina bianca prima di un capitolo
+\newcommand{\paginabianca}{\clearpage\null\thispagestyle{empty}\clearpage}
+
 % Bibliografia (BibTeX + natbib in stile APA)
 \usepackage[square]{natbib}
 \setcitestyle{square,aysep={,},yysep={;},citesep={;}}
@@ -418,6 +421,7 @@ Poiché l'osservabilità delle posizioni è completa, l'incertezza di ciascun ag
 % =============================================================================
 % CAPITOLO 4 - METODI: PPO E MAPPO
 % =============================================================================
+\paginabianca
 \chapter{Metodi: PPO e MAPPO}
 \label{chap:metodi}
 
@@ -936,6 +940,7 @@ Nella prima versione dell'ambiente multi-agente, PPO a due droni con seme $42$ �
 % =============================================================================
 % CAPITOLO 7 - RISULTATI II: ANALISI E DIAGNOSI A 4 UAV
 % =============================================================================
+\paginabianca
 \chapter{Risultati II: analisi e diagnosi a 4 UAV}
 \label{chap:risultati_2}
 
@@ -1342,6 +1347,7 @@ Gli scenari critici sono stati costruiti a mano, dopo l'osservazione dei fallime
 % =============================================================================
 % CAPITOLO 9 - DISCUSSIONE
 % =============================================================================
+\paginabianca
 \chapter{Discussione}
 \label{chap:discussione}
 
@@ -1412,6 +1418,7 @@ I limiti di generalizzabilità esterna comprendono:
 % =============================================================================
 % CAPITOLO 10 - CONCLUSIONI E SVILUPPI FUTURI
 % =============================================================================
+\paginabianca
 \chapter{Conclusioni e sviluppi futuri}
 \label{chap:conclusioni}
 
@@ -1447,6 +1454,7 @@ I limiti del lavoro aprono diverse linee di sviluppo:
 % =============================================================================
 % APPENDICE A - TRACCE DEGLI SCENARI CRITICI
 % =============================================================================
+\paginabianca
 \appendix
 \chapter{Tracce degli scenari critici}
 \label{app:tracce}
@@ -2109,6 +2117,7 @@ Montagne in $(8,5)$, $(8,6)$, $(8,7)$, $(7,7)$ che lasciano un passaggio di $1$ 
 % =============================================================================
 % BIBLIOGRAFIA
 % =============================================================================
+
 \clearpage
 \phantomsection
 \addcontentsline{toc}{chapter}{\bibname}
@@ -2183,7 +2192,7 @@ Anna grazie per la vicinanza, la dolcezza e il supporto continuo in questi anni.
 \newline Grazie per avermi ascoltato, incoraggiato nei momenti più difficili e per aver condiviso con me la gioia di ogni piccolo e grande risultato fino a questo traguardo.
 \newline Grazie di essere stata al mio fianco sia nel bene che nel male e soprattutto grazie di essere sempre stata un punto fermo al quale potevo sempre fare riferimento.
 \newline Sono onorato di poter dire di essere il tuo ragazzo e non mi stancherò mai di dirlo.
-\newline Grazie di rendermi, ogni giorno, una persona migliore del giorno precedente, con la tua presenza e la tua buonanima. 
+\newline Grazie di rendermi, ogni giorno, una persona migliore del giorno precedente, con la tua presenza e il tuo buon cuore. 
 \newline Grazie di avermi fatto vivere questi anni più leggeri con il tuo sorriso stupendo, il quale cerco di non cancellare mai dalla mia mente e di far comparire ogni giorno sul tuo viso.
 \newline Questi anni passati con te mi hanno fatto capire cosa vuol dire essere amati e spero di essere riuscito a trasmetterti anche io questa sensazione.
 \newline Grazie di avermi permesso di entrare a far parte della tua vita. 
